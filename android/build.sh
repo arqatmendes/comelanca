@@ -8,7 +8,7 @@ rm -rf build && mkdir -p build/{res,gen,obj,dex,apk/assets}
 cp -r ../www build/apk/assets/www
 $BT/aapt2 compile --dir res -o build/res/res.zip
 $BT/aapt2 link -I $JAR --manifest AndroidManifest.xml --min-sdk-version 23 --target-sdk-version 34 \
-  --version-code $VERSION_CODE --version-name $VERSION_NAME -A build/apk/assets \
+  --version-code $VERSION_CODE --version-name $VERSION_NAME --replace-version -A build/apk/assets \
   --java build/gen -o build/unsigned.apk build/res/res.zip
 javac -nowarn -source 8 -target 8 -bootclasspath $JAR -cp $JAR -d build/obj $(find src build/gen -name '*.java') 2>&1 | grep -v "bootstrap\|warning" || true
 $BT/dx --dex --min-sdk-version=23 --output=build/dex/classes.dex build/obj
