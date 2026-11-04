@@ -619,6 +619,18 @@
     };
   }
 
+  // O cardápio da escola substitui o que estava planejado em casa nas refeições feitas na escola.
+  // Só remove quando todas as crianças comem na escola (se alguma fica em casa, o prato de casa continua).
+  function applySchoolOverride(dates) {
+    let n = 0;
+    for (const date of dates) for (const slot of SCHOOL_SLOTS) {
+      const c = cell(date, slot); if (!c) continue;
+      const si = schoolInfo(date, slot, db.children);
+      if (si && si.all) { setCell(date, slot, null); n++; }
+    }
+    return n;
+  }
+
   // Caixa de diálogo: quais refeições são feitas na escola (e por qual criança)
   function openSchoolConfig(parsed) {
     const c = schoolCfg();
@@ -673,8 +685,10 @@
           if (e) db.school[d] = e;
         }
       }
+      const replaced = applySchoolOverride(parsed ? Object.keys(days) : Object.keys(db.school));
       save(); closeSheet(); render();
-      toast(parsed ? 'Cardápio da escola importado 🏫' : 'Configuração salva');
+      const extra = replaced ? ` · ${replaced} refeição(ões) de casa substituída(s) pela escola` : '';
+      toast((parsed ? 'Cardápio da escola importado 🏫' : 'Configuração salva') + extra);
       if (parsed) setTimeout(() => offerSchoolDishes(days, true), 350);
     };
   }
