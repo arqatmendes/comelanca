@@ -71,23 +71,30 @@
   const pad = n => String(n).padStart(2, '0');
 
   function parse(items, ref) {
-    // 1) Cabeçalhos das semanas: datas "02.11"
-    const dateItems = items.filter(i => /^\s*\d{1,2}[./]\d{1,2}\s*$/.test(i.str));
-    const weeks = [];
-    for (const d of dateItems) {
+    // 1) Cabeçalhos das semanas: datas "02.11", "02/11", "02.11.2026" ou "SEG 02.11", junto do nome do dia da semana
+    const DATE_RE = /(?:^|\s)(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\s*$/;
+    const WEEKDAY_RE = /(SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO|\bSEG\b|\bTER\b|\bQUA\b|\bQUI\b|\bSEX\b|\bSAB\b)/;
+    const weekdayNear = d => WEEKDAY_RE.test(norm(d.str)) || items.some(o => o !== d && Math.abs(o.y - d.y) < 20 && Math.abs((o.x + o.w / 2) - (d.x + d.w / 2)) < 70 && WEEKDAY_RE.test(norm(o.str)));
+    const weeks = []; const warnings = [];
+    for (const d of items) {
+      const m = d.str.match(DATE_RE); if (!m) continue;
+      const dd = +m[1], mm = +m[2]; if (dd < 1 || dd > 31 || mm < 1 || mm > 12) continue;
+      if (!weekdayNear(d)) continue;
       let w = weeks.find(W => Math.abs(W.y - d.y) < 4);
       if (!w) { w = { y: d.y, cols: [] }; weeks.push(w); }
-      const [dd, mm] = d.str.trim().split(/[./]/).map(Number);
-      w.cols.push({ cx: d.x + d.w / 2, day: dd, month: mm });
+      let yy = m[3] ? +m[3] : null; if (yy && yy < 100) yy += 2000;
+      // posição da data: se o texto tem o dia da semana junto, usa o centro do item inteiro
+      w.cols.push({ cx: d.x + d.w / 2, day: dd, month: mm, year: yy });
     }
     weeks.forEach(w => w.cols.sort((a, b) => a.cx - b.cx));
     weeks.sort((a, b) => a.y - b.y);
+    const spacings = weeks.filter(w => w.cols.length > 1).map(w => (w.cols[w.cols.length - 1].cx - w.cols[0].cx) / (w.cols.length - 1)).sort((a, b) => a - b);
+    const typicalSpacing = spacings.length ? spacings[Math.floor(spacings.length / 2)] : 140;
     const result = {};
 
     weeks.forEach((w, wi) => {
-      if (w.cols.length < 2) return;
       const top = w.y + 2, bottom = wi + 1 < weeks.length ? weeks[wi + 1].y - 14 : Infinity;
-      const spacing = (w.cols[w.cols.length - 1].cx - w.cols[0].cx) / (w.cols.length - 1);
+      const spacing = w.cols.length > 1 ? (w.cols[w.cols.length - 1].cx - w.cols[0].cx) / (w.cols.length - 1) : typicalSpacing;
       const labelEdge = w.cols[0].cx - spacing / 2;
       const block = items.filter(i => i.y > top && i.y < bottom);
 
@@ -140,13 +147,21 @@
       if (anchors.janta) rows.push({ key: 'janta', start: anchors.janta + 1 });
       rows.sort((a, b) => a.start - b.start);
 
+      const have = new Set(rows.map(r => r.key));
+      const wlabel = `${pad(w.cols[0].day)}/${pad(w.cols[0].month)}`;
+      if (!have.has('lm') && !have.has('lt') && !have.has('principal')) warnings.push(`Semana de ${wlabel}: não reconheci as linhas da tabela.`);
       w.cols.forEach((c, k) => {
-        const date = `${inferYear(c.month, ref)}-${pad(c.month)}-${pad(c.day)}`;
+        const date = `${c.year || inferYear(c.month, ref)}-${pad(c.month)}-${pad(c.day)}`;
+        const dl = `${pad(c.day)}/${pad(c.month)}`;
         if (holiday[k]) { result[date] = { holiday: true }; return; }
-        const cells = {};
+        const cells = {}; let lastJ = null, jDone = false;
         for (const l of colLines[k]) {
           let row = null; for (const r of rows) if (r.start <= l.y + 0.5) row = r;
           if (!row || row.key === '_almoco') continue;
+          if (row.key === 'janta') { // só a primeira célula após "JANTAR" (evita rodapés e observações)
+            if (jDone || (lastJ !== null && l.y - lastJ > 16.5)) { jDone = true; continue; }
+            lastJ = l.y;
+          }
           (cells[row.key] = cells[row.key] || []).push(l.text);
         }
         const d = (k2) => cells[k2] ? toDishes(cells[k2]) : [];
@@ -159,10 +174,16 @@
         if (!entry.lanche_manha.bercario.length) entry.lanche_manha.bercario = entry.lanche_manha.regular;
         if (!entry.lanche_tarde.bercario.length) entry.lanche_tarde.bercario = entry.lanche_tarde.regular;
         const any = entry.lanche_manha.regular.length || entry.almoco.principal || entry.lanche_tarde.regular.length || entry.janta.length;
-        if (any) result[date] = entry;
+        if (any) {
+          result[date] = entry;
+          if (have.has('principal') && !entry.almoco.principal) warnings.push(`${dl}: não encontrei o prato principal do almoço.`);
+        } else warnings.push(`${dl}: nenhum item encontrado (dia ignorado).`);
       });
     });
-    return result;
+    // mês principal do cardápio (para não sobrescrever dias de um cardápio mais novo)
+    const count = {}; Object.keys(result).forEach(d => { const m = d.slice(0, 7); count[m] = (count[m] || 0) + 1; });
+    const src = Object.keys(count).sort((a, b) => count[b] - count[a])[0] || '';
+    return { days: result, warnings, src };
   }
 
   async function parsePDF(arrayBuffer, ref) {

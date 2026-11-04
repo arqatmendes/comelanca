@@ -5,18 +5,18 @@
     {
       key: 'tudogostoso', name: 'TudoGostoso', color: '#f39c3d',
       search: q => `https://www.tudogostoso.com.br/busca?q=${encodeURIComponent(q)}`,
-      link: /tudogostoso\.com\.br\/receita\/[^"'#?\s]+/i
+      link: /^https:\/\/(www\.)?tudogostoso\.com\.br\/receita\/[^"'#?\s<>]+$/i
     },
     {
       key: 'globo', name: 'Receitas Globo', color: '#e8555a',
       search: q => `https://receitas.globo.com/busca/?q=${encodeURIComponent(q)}`,
-      link: /receitas\.globo\.com\/[^"'#?\s]*receita[^"'#?\s]*\.ghtml/i
+      link: /^https:\/\/receitas\.globo\.com\/[^"'#?\s<>]*receita[^"'#?\s<>]*\.ghtml$/i
     },
     {
       key: 'alimentando', name: 'Alimentando com Amor', color: '#7fb27a',
       search: q => `https://alimentandocomamor.com.br/?s=${encodeURIComponent(q)}`,
       api: q => `https://alimentandocomamor.com.br/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}&per_page=12&_embed=wp:featuredmedia`,
-      link: /alimentandocomamor\.com\.br\/(?!temas\/|tag\/|category\/|author\/|page\/|wp-|\?|#)[a-z0-9-]{8,}\/?$/i
+      link: /^https:\/\/(www\.)?alimentandocomamor\.com\.br\/(?!temas\/|tag\/|category\/|author\/|page\/|wp-)[a-z0-9-]{8,}\/?$/i
     }
   ];
 
@@ -37,6 +37,8 @@
   }
 
   // ---------- Leitura dos resultados ----------
+  const httpsUrl = (u, base) => { try { const x = new URL(u, base); return x.protocol === 'https:' ? x.href : ''; } catch (e) { return ''; } };
+  const imgOf = v => { if (!v) return ''; if (Array.isArray(v)) return imgOf(v[0]); if (typeof v === 'object') return imgOf(v.url || v.contentUrl || ''); return typeof v === 'string' ? v : ''; };
   const clean = s => String(s || '').replace(/\s+/g, ' ').replace(/&nbsp;/g, ' ').trim();
   const decode = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
   const slugTitle = url => { const m = url.replace(/\/$/, '').split('/').pop().replace(/\.(ghtml|html?)$/, '').replace(/^\d+-/, ''); return m.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase()); };
@@ -44,12 +46,14 @@
   function parseHTML(html, site) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const out = new Map();
+    const base = site.search('x');
     const add = (url, title, img) => {
-      if (!url) return; url = url.split('#')[0];
-      if (!site.link.test(url)) return;
+      url = httpsUrl(String(url || '').split('#')[0], base);
+      if (!url || !site.link.test(url)) return;
+      img = httpsUrl(imgOf(img), url);
       const cur = out.get(url) || { url, title: '', img: '' };
       if (title && title.length > cur.title.length && title.length < 140) cur.title = title;
-      if (img && !cur.img && !/^data:/.test(img)) cur.img = img;
+      if (img && !cur.img) cur.img = img;
       out.set(url, cur);
     };
     // 1) Dados estruturados (JSON-LD)
@@ -62,21 +66,20 @@
           if (o['@graph']) walk(o['@graph']);
           const it = o.item && typeof o.item === 'object' ? o.item : o;
           const url = it.url || (typeof o.item === 'string' ? o.item : null);
-          if (url && (it.name || o.name)) add(url, clean(it.name || o.name), Array.isArray(it.image) ? it.image[0] : (it.image && it.image.url) || it.image);
+          if (url && (it.name || o.name)) add(url, clean(String(it.name || o.name)), it.image);
         };
         walk(JSON.parse(s.textContent));
       } catch (e) { /* ignora */ }
     });
     // 2) Links da página
     doc.querySelectorAll('a[href]').forEach(a => {
-      let href = a.getAttribute('href');
-      try { href = new URL(href, site.search('x')).href; } catch (e) { return; }
-      if (!site.link.test(href)) return;
+      const href = httpsUrl(a.getAttribute('href'), base);
+      if (!href || !site.link.test(href)) return;
       const h = a.querySelector('h1,h2,h3,h4,[class*="title"],[class*="titulo"]');
       const imgEl = a.querySelector('img') || (a.closest('article,li,[class*="card"]') || a).querySelector('img');
       const img = imgEl ? (imgEl.getAttribute('data-src') || imgEl.getAttribute('data-lazy-src') || (imgEl.getAttribute('srcset') || '').split(' ')[0] || imgEl.getAttribute('src')) : '';
       const title = clean((h && h.textContent) || a.getAttribute('title') || (imgEl && imgEl.getAttribute('alt')) || a.textContent);
-      add(href, title, img ? new URL(img, href).href : '');
+      add(href, title, img);
     });
     return Array.from(out.values()).map(r => ({ ...r, title: r.title || slugTitle(r.url) })).slice(0, 15);
   }
@@ -86,9 +89,9 @@
       try {
         const posts = JSON.parse(await httpGet(site.api(q)));
         if (Array.isArray(posts)) return posts.map(p => ({
-          url: p.link, title: clean(decode((p.title && p.title.rendered) || '')),
-          img: (((p._embedded || {})['wp:featuredmedia'] || [])[0] || {}).source_url || ''
-        })).filter(r => r.url);
+          url: httpsUrl(p && p.link), title: clean(decode(String((p && p.title && p.title.rendered) || ''))).slice(0, 140),
+          img: httpsUrl((((p && p._embedded) || {})['wp:featuredmedia'] || [])[0] && p._embedded['wp:featuredmedia'][0].source_url)
+        })).filter(r => r.url && /^https:\/\/(www\.)?alimentandocomamor\.com\.br\//i.test(r.url)).map(r => ({ ...r, title: r.title || slugTitle(r.url) }));
       } catch (e) { /* tenta a página de busca */ }
     }
     return parseHTML(await httpGet(site.search(q)), site);
@@ -120,7 +123,7 @@
     const db = api.db; const esc = api.esc; const norm = api.norm;
     const ings = topIngredients(db);
     if (!st.selected) st.selected = new Set(ings.slice(0, 2));
-    const allergies = api.activeKids().flatMap(k => k.allergies || []).map(norm).filter(Boolean);
+    const kidsNow = api.activeKids();
     m.innerHTML = `
       <section class="card-plain">
         <h3>Ingredientes que eles já gostam</h3>
@@ -144,7 +147,8 @@
       const sel = Array.from(st.selected).map(norm).concat(st.extra ? [norm(st.extra)] : []);
       const list = st.results.map(r => {
         const nt = norm(r.title);
-        return { ...r, hits: sel.filter(s => nt.includes(s)).length, allergy: allergies.find(a => nt.includes(a)), known: known.has(nt) };
+        const al = api.textAllergyHits(r.title, kidsNow);
+        return { ...r, hits: sel.filter(s => nt.includes(s)).length, allergy: al.length ? al.map(h => `${h.kid.name}: ${h.allergy}`).join(', ') : '', known: known.has(nt) };
       }).sort((a, b) => b.hits - a.hits);
       const q = query();
       const errs = SITES.filter(s => st.errors[s.key]);
@@ -153,7 +157,7 @@
           <article class="recipe">
             <a class="r-img" target="_blank" href="${esc(r.url)}">${r.img ? `<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<span class="r-site" style="background:${r.color}">${esc(r.site)}</span></a>
             <div class="r-body"><b>${esc(r.title)}</b>
-              ${r.allergy ? `<small class="warn">⚠️ pode conter ${esc(r.allergy)}</small>` : ''}
+              ${r.allergy ? `<small class="warn">⚠️ pode conter alergênico (${esc(r.allergy)})</small>` : ''}
               <div class="r-actions"><a class="btn small" target="_blank" href="${esc(r.url)}">Ver receita</a>
               ${r.known ? '<span class="tag">já cadastrado</span>' : `<button class="btn small btn-pink" data-add="${i}">+ Pratos</button>`}</div></div>
           </article>`).join('')}</div>` : `<p class="muted center">Nenhuma receita encontrada nos sites.</p>`}
@@ -166,7 +170,7 @@
         const r = st.lastList[+b.dataset.add];
         const nt = norm(r.title);
         const ingr = ings.filter(i => nt.includes(norm(i)));
-        api.addDish({ name: r.title, ingredients: ingr.length ? ingr : Array.from(st.selected), slots: guessSlots(r.title), status: 'testar', url: r.url, source: r.site, notes: `Receita: ${r.site}` });
+        api.addDish({ name: r.title.slice(0, 120), ingredients: ingr.length ? ingr : Array.from(st.selected), slots: guessSlots(r.title), status: 'testar', url: api.safeUrl(r.url), source: r.site, notes: `Receita: ${r.site}` });
       });
     }
     const $$ = (s, root) => Array.from(root.querySelectorAll(s));

@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Comelança</title>
+<style>html,body{margin:0;height:100%;background:#fbf8f2}</style></head>
+<body><script>
+// Usado só pelo app Android ao atualizar da versão 1.2: copia os dados da origem antiga (file://) para a nova.
+var d = ''; try { d = localStorage.getItem('comelanca:data') || ''; } catch (e) {}
+if (window.NativeHttp && window.NativeHttp.migrate) window.NativeHttp.migrate(d);
+</script></body></html>

@@ -234,3 +234,11 @@ textarea { resize: vertical; }
 .kid-school select { border: 2px solid var(--line); border-radius: 10px; padding: 5px 8px; background: #fff; font-weight: 700; font-size: .85rem; }
 .found { background: #e6f0e3; }
 .sch-row span { font-size: .85rem; }
+.update-bar { position: fixed; left: 10px; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px)); z-index: 90; background: var(--sage); border: 2px solid var(--line); border-radius: 14px; padding: 10px 12px; font-weight: 800; box-shadow: 0 3px 0 rgba(0,0,0,.15); }
+.crash { margin-top: 30px; }
+.warnbox { background: #fff3c4; } .warnbox ul { margin: 6px 0 0; padding-left: 18px; font-size: .88rem; }
+.preview { margin: 10px 0; } .preview summary { font-weight: 800; padding: 6px 0; }
+.pv-day { background: var(--paper); border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; margin: 6px 0; }
+.pv-day label { display: block; font-size: .75rem; font-weight: 800; margin-top: 5px; }
+.pv-day input { width: 100%; border: 1.5px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: .85rem; font-weight: 600; background: #fff; }
+.backup-nag { background: #e6f0e3; }
