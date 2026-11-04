@@ -242,3 +242,7 @@ textarea { resize: vertical; }
 .pv-day label { display: block; font-size: .75rem; font-weight: 800; margin-top: 5px; }
 .pv-day input { width: 100%; border: 1.5px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: .85rem; font-weight: 600; background: #fff; }
 .backup-nag { background: #e6f0e3; }
+.sd-meta { display: block; font-weight: 600; font-size: .75rem; }
+.sheet-actions.left { justify-content: flex-start; margin-top: 4px; }
+.sticky-actions { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0 4px; margin-bottom: 0; }
+.tag-school { background: #dfe9dc; }

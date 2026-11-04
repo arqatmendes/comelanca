@@ -128,6 +128,11 @@
     if (eatIdx) return eatIdx;
     eatIdx = {};
     for (const date in db.plan) { const day = db.plan[date]; for (const k in day) for (const id of day[k].items) (eatIdx[id] = eatIdx[id] || []).push(date); }
+    // dias em que a escola serviu um prato com o mesmo nome (conta como "comeram")
+    const byName = {}; db.dishes.forEach(d => { byName[norm(cleanDishName(d.name))] = d.id; });
+    for (const date in db.school) for (const it of schoolItems(date, db.school[date])) {
+      const id = byName[norm(it.name)]; if (id) (eatIdx[id] = eatIdx[id] || []).push(date);
+    }
     for (const id in eatIdx) eatIdx[id] = Array.from(new Set(eatIdx[id])).sort();
     return eatIdx;
   }
@@ -141,7 +146,8 @@
     const t = today(); const l = lastEaten(dishId, addDays(t, 1));
     if (!l) return { text: 'nunca registrado', days: 9999 };
     const n = diffDays(l, t);
-    return { text: n === 0 ? 'hoje' : n === 1 ? 'ontem' : `há ${n} dias`, days: n };
+    const atSchool = !(db.plan[l] && Object.values(db.plan[l]).some(c => c.items.includes(dishId))) && db.school[l] ? ' (escola)' : '';
+    return { text: (n === 0 ? 'hoje' : n === 1 ? 'ontem' : `há ${n} dias`) + atSchool, days: n };
   }
 
   // Alergias: ingrediente do prato contém (ou está contido em) alguma alergia
@@ -492,6 +498,7 @@
       <p class="muted">Importe o PDF do cardápio que a escola envia todo mês. O app lê o lanche da manhã, o almoço, o lanche da tarde e o jantar de cada dia, e reconhece os feriados.</p>
       <label class="btn btn-pink wide file-btn">📄 Importar cardápio (PDF)<input type="file" accept="application/pdf,.pdf" id="schF"></label>
       <button class="btn wide" id="schCfg">⚙️ Quais refeições são na escola</button>
+      <button class="btn wide" id="schDishes">🍽️ Adicionar pratos da escola à base</button>
       <div id="schList"></div>`);
     const list = () => {
       const days = Object.keys(db.school).sort();
@@ -507,6 +514,7 @@
       const clr = $('#schClr', sh.body); if (clr) clr.onclick = () => { if (confirm('Apagar todos os dias do cardápio escolar?')) { db.school = {}; save(); list(); } };
     };
     $('#schCfg', sh.body).onclick = () => openSchoolConfig(null);
+    $('#schDishes', sh.body).onclick = () => { sh.onClose = null; offerSchoolDishes(db.school); };
     $('#schF', sh.body).onchange = async e => {
       const f = e.target.files && e.target.files[0]; e.target.value = '';
       if (!f) return;
@@ -520,6 +528,95 @@
     };
     list();
     sh.onClose = () => render();
+  }
+
+  // ---------- Pratos da escola → base de pratos ----------
+  const FOOD_LEXICON = {
+    'file de frango': 'frango', frango: 'frango', sobrecoxa: 'frango', coxa: 'frango', 'carne moida': 'carne bovina', 'carne louca': 'carne bovina', 'carne de panela': 'carne bovina',
+    carne: 'carne bovina', bife: 'carne bovina', picadinho: 'carne bovina', almondega: 'carne bovina', almondegas: 'carne bovina', escondidinho: 'carne bovina',
+    pernil: 'carne suína', lombo: 'carne suína', bisteca: 'carne suína', linguica: 'linguiça suína', peixe: 'peixe', tilapia: 'peixe', ovos: 'ovo', ovo: 'ovo', omelete: 'ovo',
+    arroz: 'arroz', feijoadinha: 'feijão', feijoada: 'feijão', feijao: 'feijão', macarrao: 'macarrão', 'batata doce': 'batata doce', batata: 'batata', mandioquinha: 'mandioquinha',
+    mandioca: 'mandioca', cenoura: 'cenoura', abobrinha: 'abobrinha', abobora: 'abóbora', brocolis: 'brócolis', 'couve-flor': 'couve-flor', couve: 'couve', repolho: 'repolho',
+    espinafre: 'espinafre', milho: 'milho', ervilha: 'ervilha', beterraba: 'beterraba', tomate: 'tomate', legumes: 'legumes', 'pao de queijo': 'queijo', queijo: 'queijo',
+    parmesao: 'queijo', requeijao: 'requeijão', iogurte: 'iogurte', leite: 'leite', manteiga: 'manteiga', banana: 'banana', maca: 'maçã', pera: 'pera', mamao: 'mamão',
+    melao: 'melão', melancia: 'melancia', uva: 'uva', laranja: 'laranja', manga: 'manga', abacaxi: 'abacaxi', goiaba: 'goiaba', morango: 'morango', 'frutas vermelhas': 'frutas vermelhas',
+    'salada de frutas': 'frutas', aveia: 'aveia', mel: 'mel', chocolate: 'chocolate', 'creme de amendoim': 'amendoim', amendoim: 'amendoim', canela: 'canela', pao: 'pão',
+    torrada: 'pão', bisnaguinha: 'pão', brioche: 'pão', cereal: 'cereal', polvilho: 'polvilho', tapioca: 'tapioca', crepioca: 'ovo', panqueca: 'ovo', bolo: 'farinha de trigo'
+  };
+  const FOOD_KEYS = Object.keys(FOOD_LEXICON).sort((a, b) => b.length - a.length);
+  function guessIngredients(name) {
+    let t = ' ' + norm(name).replace(/[^a-z0-9 -]/g, ' ').replace(/\s+/g, ' ') + ' ';
+    const out = [];
+    for (const k of FOOD_KEYS) {
+      if (!t.includes(' ' + k + ' ')) continue;
+      const v = FOOD_LEXICON[k]; if (!out.includes(v)) out.push(v);
+      t = t.split(' ' + k + ' ').join(' ');
+    }
+    return out.slice(0, 5);
+  }
+  const cleanDishName = n => { const x = String(n || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim(); return x ? x[0].toUpperCase() + x.slice(1) : ''; };
+  const HOME_SLOTS = { lanche_manha: ['lanche_manha'], lanche_tarde: ['lanche_tarde'], almoco: ['almoco', 'janta'], janta: ['janta', 'almoco'] };
+
+  // Itens que a escola serve num dia, nas refeições marcadas como "na escola"
+  function schoolItems(date, raw) {
+    const c = schoolCfg(); const e = normSchoolEntry(raw); const out = [];
+    if (!e || e.holiday || !c.days.includes(parseISO(date).getDay())) return out;
+    const att = db.children.filter(k => kidSchool(k).attends);
+    if (db.children.length && !att.length) return out;
+    const variants = Array.from(new Set((att.length ? att : [null]).map(k => k ? kidSchool(k).variant : 'regular')));
+    for (const slot of ['lanche_manha', 'lanche_tarde']) if (c.slots[slot]) {
+      const v = e[slot] || {};
+      new Set(variants.flatMap(x => (v[x] && v[x].length ? v[x] : v.regular) || []).map(cleanDishName)).forEach(n => out.push({ name: n, slot }));
+    }
+    if (c.slots.almoco && e.almoco.principal) out.push({ name: cleanDishName(e.almoco.principal), slot: 'almoco', note: e.almoco.guarnicao ? 'Na escola acompanha: ' + e.almoco.guarnicao : '' });
+    if (c.slots.janta && e.janta[0]) {
+      const main = e.janta[0].split(/,\s*/).filter(x => x.trim() && !/^(salada|folhas|alface)/i.test(x.trim()))[0];
+      if (main) out.push({ name: cleanDishName(main), slot: 'janta' });
+    }
+    return out.filter(x => x.name.length >= 3);
+  }
+
+  // Pratos das refeições marcadas como "na escola" que ainda não estão na base
+  function schoolDishCandidates(days) {
+    const t = today(); const map = new Map();
+    const add = (name, slot, date, note) => {
+      const key = norm(name); let e = map.get(key);
+      if (!e) map.set(key, e = { name, slot, slots: new Set(), count: 0, last: null, note: note || '' });
+      HOME_SLOTS[slot].forEach(x => e.slots.add(x)); e.count++;
+      if (date <= t && (!e.last || date > e.last)) e.last = date;
+    };
+    for (const date of Object.keys(days).sort()) schoolItems(date, days[date]).forEach(x => add(x.name, x.slot, date, x.note));
+    const existing = new Set(db.dishes.map(d => norm(cleanDishName(d.name))));
+    return Array.from(map.values()).filter(e => !existing.has(norm(e.name)))
+      .sort((a, b) => SCHOOL_SLOTS.indexOf(a.slot) - SCHOOL_SLOTS.indexOf(b.slot) || b.count - a.count || a.name.localeCompare(b.name));
+  }
+
+  function offerSchoolDishes(days, quiet) {
+    const list = schoolDishCandidates(days);
+    if (!list.length) { if (!quiet) toast('Nenhum prato novo da escola para adicionar'); return; }
+    const sh = openSheet('Pratos da escola', `
+      <p class="muted">Encontrei <b>${list.length} pratos</b> nas refeições feitas na escola que ainda não estão na sua base. Os marcados entram em <b>Pratos</b> como “para testar” em casa. Os dias em que a escola serve cada prato contam como “comeram”, então a sugestão evita repetir em casa o que eles acabaram de comer lá.</p>
+      <div class="sheet-actions left"><button class="btn small" id="sdAll">Marcar todos</button><button class="btn small" id="sdNone">Desmarcar todos</button></div>
+      ${SCHOOL_SLOTS.map(slot => { const g = list.filter(e => e.slot === slot); return g.length ? `<h3>${SLOT[slot].label} <small class="muted">(${g.length})</small></h3><div class="stack">${g.map(e => { const ing = guessIngredients(e.name); return `
+        <label class="opt meal-${slot}"><input type="checkbox" data-sd="${list.indexOf(e)}" checked><span>${esc(e.name)}<small class="muted sd-meta">${e.count}x no cardápio${ing.length ? ' · ' + esc(ing.join(', ')) : ''}</small></span></label>`; }).join('')}</div>` : ''; }).join('')}
+      <div class="sheet-actions sticky-actions"><button class="btn" id="sdNo">Agora não</button><button class="btn btn-pink" id="sdOk">Adicionar aos pratos</button></div>`);
+    const boxes = () => $$('[data-sd]', sh.body);
+    const upd = () => { const n = boxes().filter(b => b.checked).length; $('#sdOk', sh.body).textContent = n ? `Adicionar ${n} prato${n > 1 ? 's' : ''}` : 'Adicionar aos pratos'; };
+    boxes().forEach(b => b.onchange = upd); upd();
+    $('#sdAll', sh.body).onclick = () => { boxes().forEach(b => b.checked = true); upd(); };
+    $('#sdNone', sh.body).onclick = () => { boxes().forEach(b => b.checked = false); upd(); };
+    $('#sdNo', sh.body).onclick = () => closeSheet();
+    $('#sdOk', sh.body).onclick = () => {
+      const chosen = boxes().filter(b => b.checked).map(b => list[+b.dataset.sd]);
+      if (!chosen.length) return toast('Marque pelo menos um prato');
+      const att = db.children.filter(k => kidSchool(k).attends).map(k => k.id);
+      chosen.forEach(e => db.dishes.push({
+        id: uid('d'), name: e.name.slice(0, 120), ingredients: guessIngredients(e.name), slots: SLOTS.map(x => x.key).filter(k => e.slots.has(k)),
+        likedBy: att.length ? att : db.children.map(k => k.id), notes: ['Servido na escola', e.note].filter(Boolean).join(' · '), variations: {},
+        status: 'testar', lastServed: e.last, source: 'escola', url: ''
+      }));
+      save(); closeSheet(); render(); toast(`${chosen.length} prato(s) da escola adicionados 🍽️`);
+    };
   }
 
   // Caixa de diálogo: quais refeições são feitas na escola (e por qual criança)
@@ -578,19 +675,20 @@
       }
       save(); closeSheet(); render();
       toast(parsed ? 'Cardápio da escola importado 🏫' : 'Configuração salva');
+      if (parsed) setTimeout(() => offerSchoolDishes(days, true), 350);
     };
   }
 
   // ---------- Aba Pratos ----------
   function dishListHTML() {
     const q = norm(state.dishQuery);
-    const list = db.dishes.filter(d => state.dishFilter === 'all' || (state.dishFilter === 'testar' ? d.status === 'testar' : d.slots.includes(state.dishFilter)))
+    const list = db.dishes.filter(d => state.dishFilter === 'all' || (state.dishFilter === 'testar' ? d.status === 'testar' : state.dishFilter === 'escola' ? d.source === 'escola' : d.slots.includes(state.dishFilter)))
       .filter(d => !q || norm(d.name + ' ' + d.ingredients.join(' ')).includes(q))
       .filter(d => state.kid === 'all' || d.likedBy.includes(state.kid))
       .map(d => ({ d, since: sinceLabel(d.id) })).sort((a, b) => b.since.days - a.since.days);
     return list.map(({ d, since }) => `
         <button class="dish" data-id="${esc(d.id)}">
-          <span class="d-top"><b>${esc(d.name)}</b>${d.status === 'testar' ? '<span class="tag">testar</span>' : ''}<span class="since ${since.days > 10 ? 'old' : ''}">${since.text}</span></span>
+          <span class="d-top"><b>${esc(d.name)}</b>${d.source === 'escola' ? '<span class="tag tag-school">🏫 escola</span>' : ''}${d.status === 'testar' ? '<span class="tag">testar</span>' : ''}<span class="since ${since.days > 10 ? 'old' : ''}">${since.text}</span></span>
           <span class="d-ing">${d.ingredients.map(esc).join(' · ')}</span>
           <span class="d-meta"><span class="slot-dots">${SLOTS.map(s => `<i class="sd meal-${s.key} ${d.slots.includes(s.key) ? 'on' : ''}" title="${s.label}">${s.short[0]}</i>`).join('')}</span>
           <span class="likes">${db.children.filter(k => d.likedBy.includes(k.id)).map(k => `<i class="dot" style="background:${safeColor(k.color)}"></i>${esc(k.name)}`).join(' ')}</span></span>
@@ -601,7 +699,7 @@
     const m = $('#main');
     m.innerHTML = `
       <div class="toolbar"><input class="pill search" id="dq" type="search" placeholder="Buscar prato ou ingrediente" value="${esc(state.dishQuery)}">${kidSelect()}</div>
-      <div class="chips">${[['all', 'Todos'], ...SLOTS.map(s => [s.key, s.short]), ['testar', 'Para testar']].map(([k, l]) => `<button class="chip ${state.dishFilter === k ? 'on' : ''} ${SLOT[k] ? 'meal-' + k : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+      <div class="chips">${[['all', 'Todos'], ...SLOTS.map(s => [s.key, s.short]), ['testar', 'Para testar'], ['escola', '🏫 Da escola']].map(([k, l]) => `<button class="chip ${state.dishFilter === k ? 'on' : ''} ${SLOT[k] ? 'meal-' + k : ''}" data-f="${k}">${l}</button>`).join('')}</div>
       <div class="dish-list"></div>
       <button class="fab" id="addD" aria-label="Adicionar prato">+</button>`;
     const drawList = () => { const L = $('.dish-list', m); L.innerHTML = dishListHTML(); $$('.dish', L).forEach(b => b.onclick = () => editDish(b.dataset.id)); };
