@@ -42,7 +42,7 @@ public class MainActivity extends Activity {
     private WebView web;
     private volatile boolean destroyed = false;
     private ValueCallback<Uri[]> fileCallback;
-    private String pendingSave;
+    private byte[] pendingSave;
     private SharedPreferences prefs;
 
     @Override
@@ -201,7 +201,7 @@ public class MainActivity extends Activity {
                 OutputStream out = null;
                 try {
                     out = getContentResolver().openOutputStream(data.getData());
-                    out.write(pendingSave.getBytes("UTF-8"));
+                    out.write(pendingSave);
                     ok = true;
                 } catch (Exception ignored) {
                 } finally {
@@ -278,14 +278,24 @@ public class MainActivity extends Activity {
             }});
         }
 
-        /** Salva um arquivo (backup) onde a pessoa escolher. */
+        /** Salva um arquivo de texto (backup) onde a pessoa escolher. */
         @JavascriptInterface
         public void saveFile(final String name, final String text) {
+            try { askSave(name, "application/json", text.getBytes("UTF-8")); } catch (Exception e) { js("window.__onNativeFileSaved && window.__onNativeFileSaved(false)"); }
+        }
+
+        /** Salva um arquivo binário (ex.: planilha modelo .xlsx) enviado em base64. */
+        @JavascriptInterface
+        public void saveBase64(final String name, final String mime, final String b64) {
+            try { askSave(name, mime, android.util.Base64.decode(b64, android.util.Base64.DEFAULT)); } catch (Exception e) { js("window.__onNativeFileSaved && window.__onNativeFileSaved(false)"); }
+        }
+
+        private void askSave(final String name, final String mime, final byte[] data) {
             runOnUiThread(new Runnable() { public void run() {
-                pendingSave = text;
+                pendingSave = data;
                 Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                 i.addCategory(Intent.CATEGORY_OPENABLE);
-                i.setType("application/json");
+                i.setType(mime);
                 i.putExtra(Intent.EXTRA_TITLE, name);
                 try {
                     startActivityForResult(i, SAVE_REQ);

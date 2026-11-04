@@ -67,7 +67,7 @@
       out.dishes.push({ id: d.id, name, ingredients: arr(d.ingredients).map(i => str(i, 60).toLowerCase().trim()).filter(Boolean),
         slots: arr(d.slots).filter(x => SLOT[x]), likedBy: arr(d.likedBy).filter(id => kidIds.has(id)), notes: str(d.notes, 500), variations,
         status: ['aprovado', 'testar', 'arquivado'].includes(d.status) ? d.status : 'aprovado', lastServed: isDate(d.lastServed) ? d.lastServed : null,
-        source: str(d.source, 60), url: safeUrl(d.url) });
+        source: str(d.source, 60), url: safeUrl(d.url), pendingLikes: arr(d.pendingLikes).map(x => norm(str(x, 60))).filter(Boolean), likesExplicit: d.likesExplicit === true });
     }
     if (raw.plan && typeof raw.plan === 'object') for (const date in raw.plan) {
       const day = raw.plan[date]; if (!isDate(date) || !day || typeof day !== 'object') continue;
@@ -307,6 +307,11 @@
       </div>
       ${schoolHoliday(date) ? '<div class="holiday">🏖️ Feriado — sem aula hoje</div>' : ''}
       ${db.children.length ? '' : `<button class="card-plain onboard" id="goKids"><b>👋 Bem-vindo(a) ao Comelança!</b><br><span class="muted">Comece cadastrando as crianças na aba <b>Filhos</b> — ou importe os dados de outro celular por lá.</span>${isIOS && !isStandalone() ? '<br><span class="muted">📱 No iPhone, instale antes pelo Safari: Compartilhar → “Adicionar à Tela de Início”. Os dados do Safari e do app instalado ficam separados.</span>' : ''}</button>`}
+      ${!db.dishes.length ? `<section class="card-plain onboard">
+        <b>🍽️ Cadastre os pratos que as crianças gostam</b>
+        <p class="muted">Preencha a planilha modelo e envie aqui — ou cadastre um a um na aba <b>Pratos</b>.</p>
+        ${excelButtonsHTML()}
+        <button class="btn wide" id="goDishes">➕ Cadastrar um a um</button></section>` : ''}
       ${backupDue() ? `<button class="card-plain onboard backup-nag" id="goBackup">💾 <b>Hora de fazer um backup.</b> <span class="muted">${db.meta.lastBackup ? 'Último backup ' + sinceText(db.meta.lastBackup) : 'Você ainda não salvou um backup'} — toque para salvar.</span></button>` : ''}
       <div class="cards">${SLOTS.map(s => {
         const c = cell(date, s.key); const items = c ? c.items : [];
@@ -327,6 +332,8 @@
     $$('.meal', m).forEach(b => b.onclick = () => openSlot(date, b.dataset.slot));
     const gk = $('#goKids'); if (gk) gk.onclick = () => go('filhos');
     const gb = $('#goBackup'); if (gb) gb.onclick = () => exportBackup();
+    const gd = $('#goDishes'); if (gd) gd.onclick = () => { go('pratos'); editDish(null); };
+    bindExcelButtons(m);
     $('#sugDay').onclick = () => { const n = planRange([date]); toast(n ? `${n} refeição(ões) sugerida(s)` : noSuggestionMsg()); render(); };
   }
 
@@ -707,17 +714,21 @@
           <span class="d-meta"><span class="slot-dots">${SLOTS.map(s => `<i class="sd meal-${s.key} ${d.slots.includes(s.key) ? 'on' : ''}" title="${s.label}">${s.short[0]}</i>`).join('')}</span>
           <span class="likes">${db.children.filter(k => d.likedBy.includes(k.id)).map(k => `<i class="dot" style="background:${safeColor(k.color)}"></i>${esc(k.name)}`).join(' ')}</span></span>
           ${d.notes ? `<span class="d-note">📝 ${esc(d.notes)}</span>` : ''}
-        </button>`).join('') || '<p class="muted center">Nenhum prato encontrado.</p>';
+        </button>`).join('') || (db.dishes.length ? '<p class="muted center">Nenhum prato encontrado.</p>' : '<p class="muted center">Nenhum prato cadastrado ainda.<br>Use a planilha acima ou toque no <b>+</b>.</p>');
   }
   function renderDishes() {
     const m = $('#main');
     m.innerHTML = `
       <div class="toolbar"><input class="pill search" id="dq" type="search" placeholder="Buscar prato ou ingrediente" value="${esc(state.dishQuery)}">${kidSelect()}</div>
       <div class="chips">${[['all', 'Todos'], ...SLOTS.map(s => [s.key, s.short]), ['testar', 'Para testar'], ['escola', '🏫 Da escola']].map(([k, l]) => `<button class="chip ${state.dishFilter === k ? 'on' : ''} ${SLOT[k] ? 'meal-' + k : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+      <details class="card-plain excel-card" ${db.dishes.length ? '' : 'open'}><summary>📊 Cadastrar pratos por planilha Excel</summary>
+        <p class="muted">Baixe o modelo, preencha no computador ou no celular e envie de volta. Ou toque no <b>+</b> para cadastrar um prato de cada vez.</p>
+        ${excelButtonsHTML()}</details>
       <div class="dish-list"></div>
       <button class="fab" id="addD" aria-label="Adicionar prato">+</button>`;
     const drawList = () => { const L = $('.dish-list', m); L.innerHTML = dishListHTML(); $$('.dish', L).forEach(b => b.onclick = () => editDish(b.dataset.id)); };
     drawList();
+    bindExcelButtons(m);
     bindKidSelect();
     $('#dq').oninput = e => { state.dishQuery = e.target.value; drawList(); }; // só a lista é redesenhada (não atrapalha o teclado)
     $$('.chip', m).forEach(b => b.onclick = () => { state.dishFilter = b.dataset.f; $$('.chip', m).forEach(x => x.classList.toggle('on', x === b)); drawList(); });
@@ -822,7 +833,7 @@
       <p class="muted" id="kAge">${esc(ageText(k))}</p>
       <label class="field"><span>Alergias / restrições (separe por vírgula)</span><input id="kL" value="${esc((k.allergies || []).join(', '))}" placeholder="ex.: amendoim, leite"></label>
       <div class="field"><span>Cor</span><div class="colors">${KID_COLORS.map(c => `<label class="color"><input type="radio" name="kc" value="${c}" ${k.color === c ? 'checked' : ''}><i style="background:${c}"></i></label>`).join('')}</div></div>
-      ${isNew ? `<label class="check"><input type="checkbox" id="kAll" checked> Marcar como “gosta” em todos os pratos atuais</label>` : ''}
+      ${isNew && db.dishes.length ? `<label class="check"><input type="checkbox" id="kAll" checked> Marcar como “gosta” em todos os pratos atuais${db.dishes.some(d => (d.pendingLikes || []).length) ? ' (os pratos da planilha com nomes na coluna “Quem gosta” seguem a planilha)' : ''}</label>` : ''}
       <div class="sheet-actions">${isNew ? '' : '<button class="btn btn-danger" id="kDel">Remover</button>'}<button class="btn btn-pink" id="kSave">Salvar</button></div>`);
     $('#kB', sh.body).onchange = e => { $('#kAge', sh.body).textContent = ageText({ birth: e.target.value || null, age: k.age }); };
     $('#kSave', sh.body).onclick = () => {
@@ -831,7 +842,16 @@
       if (k.birth) delete k.age;
       k.allergies = splitList($('#kL', sh.body).value);
       const c = $('input[name=kc]:checked', sh.body); if (c && KID_COLORS.includes(c.value)) k.color = c.value;
-      if (isNew) { db.children.push(k); const all = $('#kAll', sh.body); if (all && all.checked) db.dishes.forEach(d => d.likedBy.push(k.id)); }
+      if (isNew) {
+        db.children.push(k); const all = $('#kAll', sh.body);
+        const nk = norm(k.name);
+        db.dishes.forEach(d => {
+          const pend = (d.pendingLikes || []).includes(nk);
+          if (pend) d.pendingLikes = d.pendingLikes.filter(x => x !== nk);
+          const named = pend || (d.pendingLikes || []).length || d.likesExplicit;
+          if ((pend || (all && all.checked && !named)) && !d.likedBy.includes(k.id)) d.likedBy.push(k.id);
+        });
+      }
       else db.children[db.children.findIndex(x => x.id === k.id)] = k;
       save(); closeSheet(); render(); toast('Salvo');
     };
@@ -881,6 +901,171 @@
     return false;
   };
 
+  // ---------- Planilha Excel: baixar modelo e importar pratos ----------
+  const TEMPLATE_URL = 'templates/modelo-pratos-comelanca.xlsx';
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  let xlsxReady = null, nativeSaveLabel = 'Arquivo';
+  function loadXlsxLib() {
+    if (window.XLSX) return Promise.resolve();
+    return xlsxReady = xlsxReady || new Promise((res, rej) => {
+      const sc = document.createElement('script'); sc.src = 'vendor/xlsx.mini.min.js';
+      sc.onload = () => res(); sc.onerror = () => { xlsxReady = null; rej(new Error('Não foi possível carregar o leitor de Excel')); };
+      document.head.appendChild(sc);
+    });
+  }
+  function bufToBase64(buf) {
+    const b = new Uint8Array(buf); let out = '';
+    for (let i = 0; i < b.length; i += 0x8000) out += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+    return btoa(out);
+  }
+  async function downloadTemplate() {
+    const name = 'modelo-pratos-comelanca.xlsx';
+    try {
+      const r = await fetch(TEMPLATE_URL); if (!r.ok) throw new Error('HTTP ' + r.status);
+      const buf = await r.arrayBuffer();
+      if (window.NativeHttp && window.NativeHttp.saveBase64) { nativeSaveLabel = 'Modelo Excel'; window.NativeHttp.saveBase64(name, XLSX_MIME, bufToBase64(buf)); return; }
+      const file = new File([buf], name, { type: XLSX_MIME });
+      if (isIOS && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: 'Modelo de pratos — Comelança' }); } catch (e) { /* cancelado */ }
+        return;
+      }
+      const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name;
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+      toast('Modelo salvo em Downloads 📄');
+    } catch (e) { toast('Não foi possível baixar o modelo'); }
+  }
+
+  const truthy = v => { const t = norm(String(v == null ? '' : v)); return !!t && !['nao', 'n', '0', '-', 'false', 'nunca'].includes(t); };
+  function cellDate(v) {
+    if (typeof v === 'number' && v > 20000 && v < 80000) { // número de série do Excel
+      const d = new Date(Math.round((v - 25569) * 86400000));
+      const s1 = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+      return isDate(s1) && s1 <= today() ? s1 : null;
+    }
+    const t = String(v == null ? '' : v).trim();
+    let m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+    if (m) { let y = +m[3]; if (y < 100) y += 2000; const s1 = `${y}-${pad(+m[2])}-${pad(+m[1])}`; return isDate(s1) && s1 <= today() ? s1 : null; }
+    m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m && isDate(m[0]) && m[0] <= today()) return m[0];
+    return null;
+  }
+  const XCOLS = { name: /^(prato|nome)/, ing: /^ingrediente/, cafe: /^cafe/, lanche_manha: /^lanche (da )?manha/, almoco: /^almoco/,
+    lanche_tarde: /^lanche (da )?tarde/, janta: /^jant/, likes: /^(quem gosta|gosta)/, last: /^ultima/, notes: /^obs/ };
+  function findHeader(rows) {
+    for (let r = 0; r < Math.min(rows.length, 15); r++) {
+      const idx = {};
+      (rows[r] || []).forEach((v, i) => { const t = norm(String(v == null ? '' : v)); for (const k in XCOLS) if (idx[k] === undefined && XCOLS[k].test(t)) idx[k] = i; });
+      if (idx.name !== undefined && SLOTS.some(s1 => idx[s1.key] !== undefined)) return { row: r, idx };
+    }
+    return null;
+  }
+  // "Elis, João" / "Todos" / vazio → ids das crianças; nomes ainda não cadastrados ficam pendentes
+  function resolveLikes(raw) {
+    const t = norm(raw);
+    if (!t || /^(todos|todas|ambos|ambas|todo mundo)$/.test(t)) return { ids: db.children.map(k => k.id), pending: [], unknown: [], explicit: false };
+    const names = String(raw).split(/\s*(?:,|;|\/|\be\b)\s*/i).map(x => x.trim()).filter(Boolean);
+    const ids = [], unknown = [];
+    names.forEach(n => { const k = db.children.find(c => norm(c.name) === norm(n)); if (k) { if (!ids.includes(k.id)) ids.push(k.id); } else unknown.push(n); });
+    return { ids, pending: unknown.map(norm), unknown, explicit: true };
+  }
+  function parseDishWorkbook(wb) {
+    for (const sn of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '' });
+      const h = findHeader(rows); if (!h) continue;
+      const map = new Map(); const warnings = []; let examples = 0; const unknownNames = new Map();
+      for (let r = h.row + 1; r < rows.length; r++) {
+        const row = rows[r] || []; const get = k => h.idx[k] === undefined ? '' : row[h.idx[k]];
+        const name = cleanDishName(String(get('name') == null ? '' : get('name'))).slice(0, 120);
+        if (!name) continue;
+        if (/^exemplo\b/.test(norm(name))) { examples++; continue; }
+        const slots = SLOTS.map(x => x.key).filter(k => truthy(get(k)));
+        if (!slots.length) { warnings.push(`Linha ${r + 1} — “${name}”: nenhuma refeição marcada com X (ignorado).`); continue; }
+        const likes = resolveLikes(String(get('likes') == null ? '' : get('likes')));
+        likes.unknown.forEach(u => { const nu = norm(u); if (!unknownNames.has(nu)) unknownNames.set(nu, { label: u, count: 0 }); unknownNames.get(nu).count++; });
+        const rawLast = get('last'); const last = cellDate(rawLast);
+        if (String(rawLast).trim() && !last) warnings.push(`Linha ${r + 1} — “${name}”: data “${rawLast}” não reconhecida (use dd/mm/aaaa).`);
+        const key = norm(name); const cur = map.get(key);
+        const ing = splitList(get('ing')).map(x => x.toLowerCase());
+        const notes = String(get('notes') == null ? '' : get('notes')).trim().slice(0, 500);
+        if (cur) { // linha repetida: junta as informações
+          slots.forEach(x => { if (!cur.slots.includes(x)) cur.slots.push(x); });
+          ing.forEach(x => { if (!cur.ingredients.includes(x)) cur.ingredients.push(x); });
+          likes.ids.forEach(x => { if (!cur.likedBy.includes(x)) cur.likedBy.push(x); });
+          likes.pending.forEach(x => { if (!cur.pendingLikes.includes(x)) cur.pendingLikes.push(x); });
+          cur.likesExplicit = cur.likesExplicit && likes.explicit;
+          if (notes && !cur.notes.includes(notes)) cur.notes = (cur.notes ? cur.notes + ' · ' : '') + notes;
+          if (last && (!cur.lastServed || last > cur.lastServed)) cur.lastServed = last;
+        } else map.set(key, { name, ingredients: ing, slots, likedBy: likes.ids.slice(), pendingLikes: likes.pending.slice(), likesExplicit: likes.explicit, notes, lastServed: last });
+      }
+      return { sheet: sn, dishes: Array.from(map.values()), warnings, examples, unknownNames };
+    }
+    return null;
+  }
+  async function importExcel(file) {
+    toast('Lendo a planilha…');
+    let parsed;
+    try {
+      await loadXlsxLib();
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      parsed = parseDishWorkbook(wb);
+    } catch (e) { return toast('Não consegui ler esta planilha: ' + (e.message || e)); }
+    if (!parsed) return toast('Não encontrei a coluna “Prato” e as colunas das refeições. Use o modelo do app.');
+    if (!parsed.dishes.length) return toast('Nenhum prato preenchido na planilha (as linhas “Exemplo:” são ignoradas).');
+    const existing = new Map(db.dishes.map(d => [norm(cleanDishName(d.name)), d]));
+    const fresh = parsed.dishes.filter(d => !existing.has(norm(d.name)));
+    const dup = parsed.dishes.filter(d => existing.has(norm(d.name)));
+    const kidName = id => (kid(id) || {}).name || '';
+    const sh = openSheet('Importar planilha', `
+      <div class="card-plain found"><b>✅ Planilha lida!</b><br>${parsed.dishes.length} prato(s) encontrados${fresh.length !== parsed.dishes.length ? ` · ${fresh.length} novo(s)` : ''}.</div>
+      ${!db.children.length ? '<div class="card-plain warnbox">👶 Nenhuma criança cadastrada ainda. Os nomes da coluna “Quem gosta” serão ligados às crianças quando você cadastrá-las em <b>Filhos</b>.</div>' : ''}
+      ${db.children.length && parsed.unknownNames.size ? `<div class="card-plain whois"><b>👶 Quem é quem?</b>
+        <p class="muted">Estes nomes da coluna “Quem gosta” não estão cadastrados em Filhos. Escolha a quem cada um se refere:</p>
+        ${Array.from(parsed.unknownNames.entries()).map(([nu, u]) => `<label class="whois-row"><span>“${esc(u.label)}” <small class="muted">(${u.count} prato${u.count > 1 ? 's' : ''})</small></span>
+          <select data-who="${esc(nu)}"><option value="">Ainda não cadastrada (ligar quando cadastrar)</option>${db.children.map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('')}<option value="*">Todas as crianças</option></select></label>`).join('')}</div>` : ''}
+      ${parsed.warnings.length ? `<div class="card-plain warnbox"><b>⚠️ Confira:</b><ul>${parsed.warnings.slice(0, 30).map(w => `<li>${esc(w)}</li>`).join('')}${parsed.warnings.length > 30 ? `<li>… e mais ${parsed.warnings.length - 30}</li>` : ''}</ul></div>` : ''}
+      <div class="xl-list">${parsed.dishes.map(d => `<div class="xl-row ${existing.has(norm(d.name)) ? 'dup' : ''}">
+        <b>${esc(d.name)}</b>${existing.has(norm(d.name)) ? ' <span class="tag">já existe</span>' : ''}
+        <span class="slot-dots">${SLOTS.map(x => `<i class="sd meal-${x.key} ${d.slots.includes(x.key) ? 'on' : ''}" title="${x.label}">${x.short[0]}</i>`).join('')}</span>
+        <small class="muted">${esc([d.ingredients.join(', '), d.likedBy.length && db.children.length && d.likedBy.length < db.children.length ? 'Gosta: ' + d.likedBy.map(kidName).join(', ') : '', d.pendingLikes.length ? 'Gosta: ' + d.pendingLikes.join(', ') : ''].filter(Boolean).join(' · '))}</small></div>`).join('')}</div>
+      ${dup.length ? `<label class="check"><input type="checkbox" id="xlUpd"> Atualizar os ${dup.length} prato(s) que já existem com os dados da planilha</label>` : ''}
+      <div class="sheet-actions sticky-actions"><button class="btn" id="xlNo">Cancelar</button><button class="btn btn-pink" id="xlOk">Importar</button></div>`);
+    const upd = $('#xlUpd', sh.body);
+    const label = () => { const n = fresh.length + (upd && upd.checked ? dup.length : 0); $('#xlOk', sh.body).textContent = n ? `Importar ${n} prato${n > 1 ? 's' : ''}` : 'Nada para importar'; };
+    if (upd) upd.onchange = label; label();
+    $('#xlNo', sh.body).onclick = () => closeSheet();
+    $('#xlOk', sh.body).onclick = () => {
+      let added = 0, updated = 0;
+      // aplica as escolhas de "Quem é quem?"
+      const who = {}; $$('[data-who]', sh.body).forEach(sel => { if (sel.value) who[sel.dataset.who] = sel.value; });
+      parsed.dishes.forEach(d => {
+        d.pendingLikes = d.pendingLikes.filter(nu => {
+          const v = who[nu]; if (!v) return true;
+          (v === '*' ? db.children.map(k => k.id) : [v]).forEach(id => { if (!d.likedBy.includes(id)) d.likedBy.push(id); });
+          return false;
+        });
+      });
+      fresh.forEach(d => { db.dishes.push(Object.assign({ id: uid('d'), variations: {}, status: 'aprovado', source: 'planilha', url: '' }, d)); added++; });
+      if (upd && upd.checked) dup.forEach(d => {
+        const cur = existing.get(norm(d.name));
+        Object.assign(cur, { ingredients: d.ingredients.length ? d.ingredients : cur.ingredients, slots: d.slots, likedBy: d.likedBy.length ? d.likedBy : cur.likedBy,
+          notes: d.notes || cur.notes, lastServed: d.lastServed || cur.lastServed, pendingLikes: d.pendingLikes, likesExplicit: d.likesExplicit });
+        updated++;
+      });
+      if (!added && !updated) return toast('Nada para importar');
+      save(); closeSheet(); state.dishFilter = 'all'; render();
+      toast(`${added} prato(s) importado(s)${updated ? `, ${updated} atualizado(s)` : ''} ✅`);
+    };
+  }
+  // Botões "Baixar modelo Excel" / "Enviar Excel preenchido"
+  const excelButtonsHTML = () => `<div class="excel-btns">
+      <button class="btn" data-xl="tpl">📄 Baixar modelo Excel</button>
+      <label class="btn btn-pink file-btn">📤 Enviar Excel preenchido<input type="file" data-xl="up" accept=".xlsx,.xls,.xlsm,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"></label>
+    </div>`;
+  function bindExcelButtons(root) {
+    $$('[data-xl="tpl"]', root).forEach(b => b.onclick = () => downloadTemplate());
+    $$('[data-xl="up"]', root).forEach(i => i.onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) importExcel(f); });
+  }
+
   // ---------- Backup ----------
   const PREV_KEY = 'comelanca:prev';
   function sinceText(date) { const n = diffDays(date, today()); return n <= 0 ? 'hoje' : n === 1 ? 'ontem' : `há ${n} dias`; }
@@ -904,7 +1089,7 @@
   function exportBackup() {
     const text = JSON.stringify(db); const name = `comelanca-backup-${today()}.json`;
     db.meta.lastBackup = today(); save();
-    if (window.NativeHttp && window.NativeHttp.saveFile) { window.NativeHttp.saveFile(name, text); return; }
+    if (window.NativeHttp && window.NativeHttp.saveFile) { nativeSaveLabel = 'Backup'; window.NativeHttp.saveFile(name, text); return; }
     try {
       const file = new File([text], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: 'Backup Comelança' }).catch(() => {}); return; }
@@ -914,7 +1099,7 @@
     toast('Backup salvo em Downloads');
   }
   window.__toast = msg => toast(String(msg));
-  window.__onNativeFileSaved = ok => toast(ok ? 'Backup salvo ✅' : 'Backup não foi salvo');
+  window.__onNativeFileSaved = ok => { toast(ok ? `${nativeSaveLabel} salvo ✅` : `${nativeSaveLabel} não foi salvo`); nativeSaveLabel = 'Arquivo'; };
 
   // Atualiza "hoje" se o app ficar aberto de um dia para o outro
   let lastToday = today();

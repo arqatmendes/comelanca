@@ -246,3 +246,14 @@ textarea { resize: vertical; }
 .sheet-actions.left { justify-content: flex-start; margin-top: 4px; }
 .sticky-actions { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0 4px; margin-bottom: 0; }
 .tag-school { background: #dfe9dc; }
+.excel-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 4px; }
+.excel-btns .btn { font-size: .78rem; padding: 10px 8px; text-align: center; }
+.excel-card { margin: 0 0 12px; } .excel-card summary { font-weight: 800; cursor: pointer; }
+.onboard .btn.wide { margin-top: 6px; }
+.xl-list { display: grid; gap: 6px; margin: 10px 0; }
+.xl-row { background: var(--paper); border: 2px solid var(--line); border-radius: 12px; padding: 7px 10px; display: grid; gap: 3px; }
+.xl-row.dup { opacity: .7; }
+.whois { background: #eef4fb; }
+.whois-row { display: grid; gap: 4px; margin: 8px 0; font-weight: 700; font-size: .9rem; }
+.whois-row select { border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; background: #fff; font-weight: 700; }
+.xl-row .tag { justify-self: start; margin-left: 0; } .xl-row .slot-dots { margin: 2px 0; }
