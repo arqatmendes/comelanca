@@ -1,5 +1,5 @@
 // Comelança offline: mostra a versão guardada na hora e atualiza em segundo plano
-const CACHE = 'comelanca-v4';
+const CACHE = 'comelanca-v5';
 const FILES = ['./', 'index.html', 'css/app.css', 'js/art.js', 'js/data.js', 'js/allergy.js', 'js/recipes.js', 'js/school.js', 'js/app.js', 'js/pwa.js',
   'vendor/pdf.min.js', 'vendor/xlsx.mini.min.js', 'templates/modelo-pratos-comelanca.xlsx', 'vendor/pdf.worker.min.js', 'fonts/fredoka.woff2', 'fonts/nunito.woff2', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); });

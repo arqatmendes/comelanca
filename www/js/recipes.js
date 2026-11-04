@@ -98,7 +98,7 @@
   }
 
   // ---------- Estado da aba ----------
-  const st = { selected: null, sites: new Set(SITES.map(s => s.key)), kidsOnly: false, extra: '', results: null, errors: {}, loading: false };
+  const st = { mode: 'ing', free: '', selected: null, sites: new Set(SITES.map(s => s.key)), kidsOnly: false, extra: '', results: null, errors: {}, loading: false };
 
   function topIngredients(db) {
     const count = {};
@@ -125,11 +125,19 @@
     if (!st.selected) st.selected = new Set(ings.slice(0, 2));
     const kidsNow = api.activeKids();
     m.innerHTML = `
+      <div class="seg" role="tablist" aria-label="Tipo de busca">
+        <button role="tab" class="seg-b ${st.mode === 'ing' ? 'on' : ''}" data-rmode="ing">Por ingrediente</button>
+        <button role="tab" class="seg-b ${st.mode === 'livre' ? 'on' : ''}" data-rmode="livre">Busca livre</button>
+      </div>
       <section class="card-plain">
+        ${st.mode === 'ing' ? `
         <h3>Ingredientes que eles já gostam</h3>
-        <p class="muted">Escolha 1 a 3 para combinar.</p>
-        <div class="chips">${ings.map(i => `<button class="chip ${st.selected.has(i) ? 'on' : ''}" data-i="${esc(i)}">${esc(i)}</button>`).join('')}</div>
-        <input class="pill search" id="rx" placeholder="Outro ingrediente (opcional)" value="${esc(st.extra)}">
+        ${ings.length ? `<p class="muted">Escolha 1 a 3 para combinar.</p>
+        <div class="chips">${ings.map(i => `<button class="chip ${st.selected.has(i) ? 'on' : ''}" data-i="${esc(i)}">${esc(i)}</button>`).join('')}</div>` : '<p class="muted">Cadastre pratos com ingredientes para ver sugestões aqui — ou digite um ingrediente abaixo.</p>'}
+        <input class="pill search" id="rx" placeholder="Outro ingrediente (opcional)" value="${esc(st.extra)}">` : `
+        <h3>O que você procura?</h3>
+        <p class="muted">Busque qualquer receita nos três sites: nome do prato, ingrediente, ocasião…</p>
+        <input class="pill search" id="rq" type="search" enterkeyhint="search" placeholder="ex.: bolo de banana sem açúcar" value="${esc(st.free)}">`}
         <div class="chips sites">${SITES.map(s => `<label class="chip"><input type="checkbox" data-s="${s.key}" ${st.sites.has(s.key) ? 'checked' : ''}><i class="dot" style="background:${s.color}"></i>${s.name}</label>`).join('')}
           <label class="chip"><input type="checkbox" id="rk" ${st.kidsOnly ? 'checked' : ''}>👶 Só receitas infantis</label></div>
         <button class="btn btn-pink wide" id="rgo" ${st.loading ? 'disabled' : ''}>${st.loading ? 'Buscando…' : '🔎 Buscar ideias'}</button>
@@ -137,14 +145,15 @@
       <div id="rres">${resultsHTML()}</div>`;
 
     function query() {
+      if (st.mode === 'livre') return st.free.trim() + (st.kidsOnly ? ' infantil' : '');
       const parts = Array.from(st.selected).slice(0, 3); if (st.extra.trim()) parts.push(st.extra.trim());
       return parts.join(' ') + (st.kidsOnly ? ' infantil' : '');
     }
     function resultsHTML() {
       if (st.loading) return `<div class="loading"><span></span><span></span><span></span></div>`;
-      if (!st.results) return `<p class="muted center">Toque em “Buscar ideias” para ver receitas novas com esses ingredientes.</p>`;
+      if (!st.results) return `<p class="muted center">${st.mode === 'livre' ? 'Digite o que procura e toque em “Buscar ideias”.' : 'Toque em “Buscar ideias” para ver receitas novas com esses ingredientes.'}</p>`;
       const known = new Set(db.dishes.map(d => norm(d.name)));
-      const sel = Array.from(st.selected).map(norm).concat(st.extra ? [norm(st.extra)] : []);
+      const sel = st.mode === 'livre' ? norm(st.free).split(/\s+/).filter(w => w.length > 2) : Array.from(st.selected).map(norm).concat(st.extra ? [norm(st.extra)] : []);
       const list = st.results.map(r => {
         const nt = norm(r.title);
         const al = api.textAllergyHits(r.title, kidsNow);
@@ -177,9 +186,12 @@
     $$('[data-i]', m).forEach(b => b.onclick = () => { const i = b.dataset.i; st.selected.has(i) ? st.selected.delete(i) : st.selected.add(i); render(m, api); });
     $$('[data-s]', m).forEach(c => c.onchange = () => { c.checked ? st.sites.add(c.dataset.s) : st.sites.delete(c.dataset.s); });
     m.querySelector('#rk').onchange = e => st.kidsOnly = e.target.checked;
-    m.querySelector('#rx').oninput = e => st.extra = e.target.value;
+    $$('[data-rmode]', m).forEach(b => b.onclick = () => { if (st.mode !== b.dataset.rmode) { st.mode = b.dataset.rmode; st.results = null; render(m, api); } });
+    const rx = m.querySelector('#rx'); if (rx) rx.oninput = e => st.extra = e.target.value;
+    const rq = m.querySelector('#rq'); if (rq) { rq.oninput = e => st.free = e.target.value; rq.onkeydown = e => { if (e.key === 'Enter') m.querySelector('#rgo').click(); }; }
     m.querySelector('#rgo').onclick = async () => {
-      if (!st.selected.size && !st.extra.trim()) return api.toast('Escolha pelo menos um ingrediente');
+      if (st.mode === 'livre' && !st.free.trim()) return api.toast('Digite o que você procura');
+      if (st.mode === 'ing' && !st.selected.size && !st.extra.trim()) return api.toast('Escolha pelo menos um ingrediente');
       if (!st.sites.size) return api.toast('Escolha pelo menos um site');
       st.loading = true; st.errors = {}; render(m, api);
       const q = query();
@@ -188,7 +200,7 @@
       await Promise.all(sites.map(async s => {
         try {
           let r = await searchSite(s, q);
-          if (r.length < 3 && st.selected.size > 1) { // poucos resultados: tenta cada ingrediente sozinho
+          if (st.mode === 'ing' && r.length < 3 && st.selected.size > 1) { // poucos resultados: tenta cada ingrediente sozinho
             for (const i of Array.from(st.selected).slice(0, 3)) { try { r = r.concat(await searchSite(s, i + (st.kidsOnly ? ' infantil' : ''))); } catch (e) { } }
           }
           const seen = new Set();

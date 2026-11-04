@@ -257,3 +257,18 @@ textarea { resize: vertical; }
 .whois-row { display: grid; gap: 4px; margin: 8px 0; font-weight: 700; font-size: .9rem; }
 .whois-row select { border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; background: #fff; font-weight: 700; }
 .xl-row .tag { justify-self: start; margin-left: 0; } .xl-row .slot-dots { margin: 2px 0; }
+
+/* Seletor segmentado (Agenda: Dia/Semana · Receitas: tipo de busca) */
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: #e9e2d6; border: 2px solid var(--line); border-radius: 999px; padding: 3px; margin: 0 0 12px; }
+.seg-b { border: 0; background: none; border-radius: 999px; padding: 8px 6px; font-weight: 800; font-size: .9rem; text-transform: uppercase; letter-spacing: .3px; color: var(--ink-soft); }
+.seg-b.on { background: var(--paper); color: var(--ink); box-shadow: 0 0 0 2px var(--line); }
+/* Aba Cadastro */
+.cad { background: var(--paper); border: 2px solid var(--line); border-radius: 18px; padding: 12px 14px; margin: 0 0 14px; }
+.cad-h { font-family: Fredoka, sans-serif; font-weight: 600; font-size: 1.2rem; margin: 0 0 6px; }
+.cad .kids { margin: 8px 0; } .cad .kid { background: var(--bg); }
+.cad .btn.wide { margin-top: 8px; }
+.cad .file-btn { margin: 8px 0 0; }
+.btn:disabled { opacity: .45; }
+.count { margin: 0 2px 6px; font-size: .8rem; }
+.empty-dishes { padding: 20px 0; }
+.tab span { font-size: .72rem; }

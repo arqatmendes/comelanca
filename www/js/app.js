@@ -234,13 +234,15 @@
   const noSuggestionMsg = () => planRange.tried ? 'Nenhum prato combina com as refeições vazias — cadastre mais pratos ou confira “quem gosta”' : 'Nada para sugerir — tudo preenchido';
 
   // ---------- Estado e navegação ----------
-  const state = { view: 'dia', date: today(), week: weekStart(today()), kid: 'all', dishFilter: 'all', dishQuery: '' };
+  const MODE_KEY = 'comelanca:agendaMode';
+  let savedMode = 'dia'; try { savedMode = localStorage.getItem(MODE_KEY) === 'semana' ? 'semana' : 'dia'; } catch (e) { /* sem armazenamento */ }
+  const state = { view: 'agenda', agendaMode: savedMode, date: today(), week: weekStart(today()), kid: 'all', dishFilter: 'all', dishQuery: '' };
+  function setAgendaMode(mode) { state.agendaMode = mode; try { localStorage.setItem(MODE_KEY, mode); } catch (e) { /* ok */ } }
   const TABS = [
-    { key: 'dia', label: 'Dia', icon: '<path d="M4 6h16M4 12h16M4 18h10"/>' },
-    { key: 'semana', label: 'Semana', icon: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>' },
-    { key: 'pratos', label: 'Pratos', icon: '<path d="M4 11a8 8 0 0 0 16 0z"/><path d="M12 3v3"/>' },
+    { key: 'agenda', label: 'Agenda', icon: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4M7.5 14h3M13.5 14h3M7.5 17.5h3"/>' },
+    { key: 'pratos', label: 'Pratos', icon: '<path d="M4 11a8 8 0 0 0 16 0z"/><path d="M12 3v3M2.5 11h19"/>' },
     { key: 'receitas', label: 'Receitas', icon: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>' },
-    { key: 'filhos', label: 'Filhos', icon: '<circle cx="9" cy="8" r="3.2"/><circle cx="17" cy="9.5" r="2.5"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M14.5 15.2c3 -.6 6 1.3 6 4.8"/>' }
+    { key: 'cadastro', label: 'Cadastro', icon: '<rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/>' }
   ];
   const svgI = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 
@@ -258,21 +260,22 @@
       <button class="btn" id="crExp">📤 Salvar backup dos dados</button>
       ${hasPrev() ? '<button class="btn" id="crPrev">↩️ Voltar aos dados anteriores à última importação</button>' : ''}
       <button class="btn btn-danger" id="crReset">Restaurar dados iniciais</button></div></section></main>`;
-    $('#crRetry').onclick = () => { state.view = 'dia'; state.kid = 'all'; render(); };
+    $('#crRetry').onclick = () => { state.view = 'agenda'; state.kid = 'all'; render(); };
     $('#crExp').onclick = () => exportBackup();
     const pv = $('#crPrev'); if (pv) pv.onclick = () => { restorePrev(); render(); };
-    $('#crReset').onclick = () => { if (!confirm('Apagar todos os dados deste aparelho e voltar ao início?')) return; db = normalize(JSON.parse(JSON.stringify(window.SEED))); save(); state.view = 'dia'; state.kid = 'all'; render(); };
+    $('#crReset').onclick = () => { if (!confirm('Apagar todos os dados deste aparelho e voltar ao início?')) return; db = normalize(JSON.parse(JSON.stringify(window.SEED))); save(); state.view = 'agenda'; state.kid = 'all'; render(); };
   }
   function renderView() {
     if (state.kid !== 'all' && !kid(state.kid)) state.kid = 'all';
     const app = $('#app');
-    const titles = { dia: 'Cardápio do Dia', semana: 'Cardápio da Semana', pratos: 'Pratos', receitas: 'Ideias Novas', filhos: 'Filhos' };
+    if (!TABS.some(t => t.key === state.view)) state.view = 'agenda';
+    const titles = { agenda: state.agendaMode === 'semana' ? 'Cardápio da Semana' : 'Cardápio do Dia', pratos: 'Pratos', receitas: 'Receitas', cadastro: 'Cadastro' };
     app.innerHTML = `
       <header class="top"><h1 class="title-outline">${titles[state.view]}</h1></header>
       <main id="main" class="view-${state.view}"></main>
       <nav class="tabs">${TABS.map(t => `<button class="tab ${state.view === t.key ? 'on' : ''}" data-tab="${t.key}">${svgI(t.icon)}<span>${t.label}</span></button>`).join('')}</nav>`;
     $$('.tab', app).forEach(b => b.onclick = () => go(b.dataset.tab));
-    ({ dia: renderDay, semana: renderWeek, pratos: renderDishes, receitas: () => window.Recipes.render($('#main'), API), filhos: renderKids })[state.view]();
+    ({ agenda: renderAgenda, pratos: renderDishes, receitas: () => window.Recipes.render($('#main'), API), cadastro: renderCadastro })[state.view]();
   }
 
   function kidSelect() {
@@ -294,9 +297,23 @@
     return `<li>${esc(d.name)}${forWho}${notes.length ? `<small> — ${esc(notes.join('; '))}</small>` : ''}${alTxt ? `<span class="warn">${esc(alTxt)}</span>` : ''}</li>`;
   }
 
-  // ---------- Aba Dia ----------
+  // ---------- Aba Agenda (visualização Dia / Semana) ----------
+  function renderAgenda() {
+    const main = $('#main');
+    main.innerHTML = `<div class="seg" role="tablist" aria-label="Visualização">
+        <button role="tab" class="seg-b ${state.agendaMode === 'dia' ? 'on' : ''}" data-mode="dia" aria-selected="${state.agendaMode === 'dia'}">Dia</button>
+        <button role="tab" class="seg-b ${state.agendaMode === 'semana' ? 'on' : ''}" data-mode="semana" aria-selected="${state.agendaMode === 'semana'}">Semana</button>
+      </div><div id="agendaBody"></div>`;
+    $$('.seg-b', main).forEach(b => b.onclick = () => {
+      if (b.dataset.mode === state.agendaMode) return;
+      setAgendaMode(b.dataset.mode);
+      if (state.agendaMode === 'semana') state.week = weekStart(state.date);
+      render();
+    });
+    (state.agendaMode === 'semana' ? renderWeek : renderDay)();
+  }
   function renderDay() {
-    const m = $('#main'); const kids = activeKids(); const date = state.date;
+    const m = $('#agendaBody'); const kids = activeKids(); const date = state.date;
     const isToday = date === today();
     m.innerHTML = `
       <div class="toolbar">
@@ -306,12 +323,11 @@
         ${kidSelect()}
       </div>
       ${schoolHoliday(date) ? '<div class="holiday">🏖️ Feriado — sem aula hoje</div>' : ''}
-      ${db.children.length ? '' : `<button class="card-plain onboard" id="goKids"><b>👋 Bem-vindo(a) ao Comelança!</b><br><span class="muted">Comece cadastrando as crianças na aba <b>Filhos</b> — ou importe os dados de outro celular por lá.</span>${isIOS && !isStandalone() ? '<br><span class="muted">📱 No iPhone, instale antes pelo Safari: Compartilhar → “Adicionar à Tela de Início”. Os dados do Safari e do app instalado ficam separados.</span>' : ''}</button>`}
+      ${db.children.length ? '' : `<button class="card-plain onboard" id="goKids"><b>👋 Bem-vindo(a) ao Comelança!</b><br><span class="muted">Comece pela aba <b>Cadastro</b>: cadastre as crianças, os pratos (um a um ou pela planilha Excel) e o cardápio da escola — ou importe o backup de outro celular.</span>${isIOS && !isStandalone() ? '<br><span class="muted">📱 No iPhone, instale antes pelo Safari: Compartilhar → “Adicionar à Tela de Início”. Os dados do Safari e do app instalado ficam separados.</span>' : ''}</button>`}
       ${!db.dishes.length ? `<section class="card-plain onboard">
         <b>🍽️ Cadastre os pratos que as crianças gostam</b>
-        <p class="muted">Preencha a planilha modelo e envie aqui — ou cadastre um a um na aba <b>Pratos</b>.</p>
-        ${excelButtonsHTML()}
-        <button class="btn wide" id="goDishes">➕ Cadastrar um a um</button></section>` : ''}
+        <p class="muted">Use a planilha Excel na aba <b>Cadastro</b> para incluir vários de uma vez, ou cadastre um a um.</p>
+        <div class="excel-btns"><button class="btn btn-pink" id="goCad">📋 Ir para Cadastro</button><button class="btn" id="goDishes">➕ Um a um</button></div></section>` : ''}
       ${backupDue() ? `<button class="card-plain onboard backup-nag" id="goBackup">💾 <b>Hora de fazer um backup.</b> <span class="muted">${db.meta.lastBackup ? 'Último backup ' + sinceText(db.meta.lastBackup) : 'Você ainda não salvou um backup'} — toque para salvar.</span></button>` : ''}
       <div class="cards">${SLOTS.map(s => {
         const c = cell(date, s.key); const items = c ? c.items : [];
@@ -330,10 +346,10 @@
     $('#next').onclick = () => { state.date = addDays(date, 1); render(); };
     $('#datePick').onchange = e => { if (e.target.value) { state.date = e.target.value; render(); } };
     $$('.meal', m).forEach(b => b.onclick = () => openSlot(date, b.dataset.slot));
-    const gk = $('#goKids'); if (gk) gk.onclick = () => go('filhos');
+    const gk = $('#goKids'); if (gk) gk.onclick = () => go('cadastro');
+    const gc = $('#goCad'); if (gc) gc.onclick = () => go('cadastro');
     const gb = $('#goBackup'); if (gb) gb.onclick = () => exportBackup();
     const gd = $('#goDishes'); if (gd) gd.onclick = () => { go('pratos'); editDish(null); };
-    bindExcelButtons(m);
     $('#sugDay').onclick = () => { const n = planRange([date]); toast(n ? `${n} refeição(ões) sugerida(s)` : noSuggestionMsg()); render(); };
   }
 
@@ -383,7 +399,7 @@
 
   // ---------- Aba Semana ----------
   function renderWeek() {
-    const m = $('#main'); const kids = activeKids(); const ws = state.week;
+    const m = $('#agendaBody'); const kids = activeKids(); const ws = state.week;
     const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
     const t = today();
     m.innerHTML = `
@@ -395,8 +411,7 @@
       </div>
       <div class="actions row">
         <button class="btn btn-pink" id="sugWeek">✨ Sugerir semana</button>
-        <button class="btn" id="school">🏫 Escola</button>
-        <button class="btn" id="more">⋯</button>
+        <button class="btn" id="more" aria-label="Mais opções">⋯</button>
       </div>
       <div class="week">${days.map(date => `
         <section class="day ${date === t ? 'today' : ''}">
@@ -413,13 +428,12 @@
     $('#wprev').onclick = () => { state.week = addDays(ws, -7); render(); };
     $('#wnext').onclick = () => { state.week = addDays(ws, 7); render(); };
     $$('.slot', m).forEach(b => b.onclick = () => openSlot(b.dataset.date, b.dataset.slot));
-    $$('.day-head', m).forEach(b => b.onclick = () => { state.date = b.dataset.date; go('dia'); });
+    $$('.day-head', m).forEach(b => b.onclick = () => { state.date = b.dataset.date; setAgendaMode('dia'); go('agenda'); });
     $('#sugWeek').onclick = () => {
       const from = ws < t ? t : ws; const ds = days.filter(d => d >= from);
       if (!ds.length) return toast('Essa semana já passou');
       const n = planRange(ds); toast(n ? `${n} refeições sugeridas 🎉` : noSuggestionMsg()); render();
     };
-    $('#school').onclick = () => openSchool();
     $('#more').onclick = () => {
       const sh = openSheet('Opções da semana', `
         <div class="stack">
@@ -500,6 +514,15 @@
     });
   }
 
+  async function importSchoolPDF(f) {
+    toast('Lendo o cardápio…');
+    try {
+      await loadPdfLib();
+      const parsed = await window.SchoolPDF.parsePDF(await f.arrayBuffer(), new Date());
+      if (!Object.keys(parsed.days).length) return toast('Não encontrei dias neste PDF. Confira se é o cardápio da escola.');
+      openSchoolConfig(parsed);
+    } catch (err) { toast('Não consegui ler este PDF: ' + (err.message || err)); }
+  }
   function openSchool() {
     const sh = openSheet('🏫 Cardápio da escola', `
       <p class="muted">Importe o PDF do cardápio que a escola envia todo mês. O app lê o lanche da manhã, o almoço, o lanche da tarde e o jantar de cada dia, e reconhece os feriados.</p>
@@ -522,17 +545,7 @@
     };
     $('#schCfg', sh.body).onclick = () => openSchoolConfig(null);
     $('#schDishes', sh.body).onclick = () => { sh.onClose = null; offerSchoolDishes(db.school); };
-    $('#schF', sh.body).onchange = async e => {
-      const f = e.target.files && e.target.files[0]; e.target.value = '';
-      if (!f) return;
-      toast('Lendo o cardápio…');
-      try {
-        await loadPdfLib();
-        const parsed = await window.SchoolPDF.parsePDF(await f.arrayBuffer(), new Date());
-        if (!Object.keys(parsed.days).length) return toast('Não encontrei dias neste PDF. Confira se é o cardápio da escola.');
-        openSchoolConfig(parsed);
-      } catch (err) { toast('Não consegui ler este PDF: ' + (err.message || err)); }
-    };
+    $('#schF', sh.body).onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) { sh.onClose = null; importSchoolPDF(f); } };
     list();
     sh.onClose = () => render();
   }
@@ -670,7 +683,7 @@
         <select data-var="${esc(k.id)}">${Object.entries(VARIANTS).map(([v, l]) => `<option value="${v}" ${ks.variant === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`; }).join('')}` : ''}
       <p class="muted">As refeições marcadas aparecem no calendário como “🏫 Escola” e não entram na sugestão automática. A janta em casa evita repetir o que foi servido no almoço da escola.</p>
       <div class="sheet-actions"><button class="btn" id="cfgCancel">Cancelar</button><button class="btn btn-pink" id="cfgOk">${parsed ? 'Importar' : 'Salvar'}</button></div>`);
-    $('#cfgCancel', sh.body).onclick = () => { closeSheet(); if (!parsed) openSchool(); };
+    $('#cfgCancel', sh.body).onclick = () => closeSheet();
     $('#cfgOk', sh.body).onclick = () => {
       const slots = {}; SCHOOL_SLOTS.forEach(k => slots[k] = false); $$('input[name=ss]:checked', sh.body).forEach(i => slots[i.value] = true);
       c.slots = slots;
@@ -714,21 +727,23 @@
           <span class="d-meta"><span class="slot-dots">${SLOTS.map(s => `<i class="sd meal-${s.key} ${d.slots.includes(s.key) ? 'on' : ''}" title="${s.label}">${s.short[0]}</i>`).join('')}</span>
           <span class="likes">${db.children.filter(k => d.likedBy.includes(k.id)).map(k => `<i class="dot" style="background:${safeColor(k.color)}"></i>${esc(k.name)}`).join(' ')}</span></span>
           ${d.notes ? `<span class="d-note">📝 ${esc(d.notes)}</span>` : ''}
-        </button>`).join('') || (db.dishes.length ? '<p class="muted center">Nenhum prato encontrado.</p>' : '<p class="muted center">Nenhum prato cadastrado ainda.<br>Use a planilha acima ou toque no <b>+</b>.</p>');
+        </button>`).join('') || (db.dishes.length ? '<p class="muted center">Nenhum prato encontrado.</p>' : '<div class="center empty-dishes"><p class="muted">Nenhum prato cadastrado ainda.<br>Toque no <b>+</b> para cadastrar um, ou inclua vários de uma vez pela planilha Excel.</p><button class="btn" id="goCad2">📋 Planilha Excel (Cadastro)</button></div>');
   }
   function renderDishes() {
     const m = $('#main');
     m.innerHTML = `
       <div class="toolbar"><input class="pill search" id="dq" type="search" placeholder="Buscar prato ou ingrediente" value="${esc(state.dishQuery)}">${kidSelect()}</div>
       <div class="chips">${[['all', 'Todos'], ...SLOTS.map(s => [s.key, s.short]), ['testar', 'Para testar'], ['escola', '🏫 Da escola']].map(([k, l]) => `<button class="chip ${state.dishFilter === k ? 'on' : ''} ${SLOT[k] ? 'meal-' + k : ''}" data-f="${k}">${l}</button>`).join('')}</div>
-      <details class="card-plain excel-card" ${db.dishes.length ? '' : 'open'}><summary>📊 Cadastrar pratos por planilha Excel</summary>
-        <p class="muted">Baixe o modelo, preencha no computador ou no celular e envie de volta. Ou toque no <b>+</b> para cadastrar um prato de cada vez.</p>
-        ${excelButtonsHTML()}</details>
+      <p class="muted count" id="dCount"></p>
       <div class="dish-list"></div>
       <button class="fab" id="addD" aria-label="Adicionar prato">+</button>`;
-    const drawList = () => { const L = $('.dish-list', m); L.innerHTML = dishListHTML(); $$('.dish', L).forEach(b => b.onclick = () => editDish(b.dataset.id)); };
+    const drawList = () => {
+      const L = $('.dish-list', m); L.innerHTML = dishListHTML(); const n = $$('.dish', L).length;
+      $('#dCount', m).textContent = db.dishes.length ? (n === db.dishes.length ? `${n} prato${n === 1 ? '' : 's'} cadastrado${n === 1 ? '' : 's'}` : `${n} de ${db.dishes.length} pratos`) : '';
+      $$('.dish', L).forEach(b => b.onclick = () => editDish(b.dataset.id));
+      const gc = $('#goCad2', L); if (gc) gc.onclick = () => go('cadastro');
+    };
     drawList();
-    bindExcelButtons(m);
     bindKidSelect();
     $('#dq').oninput = e => { state.dishQuery = e.target.value; drawList(); }; // só a lista é redesenhada (não atrapalha o teclado)
     $$('.chip', m).forEach(b => b.onclick = () => { state.dishFilter = b.dataset.f; $$('.chip', m).forEach(x => x.classList.toggle('on', x === b)); drawList(); });
@@ -793,29 +808,62 @@
     if (k.age !== '' && k.age != null) return `${k.age} anos — cadastre a data de nascimento`;
     return 'Data de nascimento não informada';
   }
-  function renderKids() {
+  function renderCadastro() {
     const m = $('#main');
+    const schoolDays = Object.keys(db.school);
+    const sd = schoolDays.filter(d => !db.school[d].holiday).sort();
     m.innerHTML = `
-      <div class="kids">${db.children.map(k => `
-        <button class="kid" data-id="${esc(k.id)}" style="--kc:${safeColor(k.color)}">
-          <span class="avatar">${esc(k.name[0] || '?')}</span>
-          <span class="k-body"><b>${esc(k.name)}</b><small>${esc(ageText(k))}</small>
-          <span class="k-al">${(k.allergies || []).length ? k.allergies.map(a => `<span class="tag tag-warn">⚠️ ${esc(a)}</span>`).join(' ') : '<small class="muted">Sem alergias cadastradas</small>'}</span>
-          <small class="muted">${db.dishes.filter(d => d.likedBy.includes(k.id)).length} pratos favoritos</small></span>
-        </button>`).join('') || '<p class="muted center">Nenhuma criança cadastrada.</p>'}</div>
-      <div class="actions"><button class="btn btn-pink" id="addK">+ Adicionar criança</button></div>
-      <section class="card-plain">
-        <h3>Dados do app</h3>
-        <p class="muted">Os dados ficam guardados neste aparelho. Salve um backup de vez em quando e use-o para levar o cardápio a outro celular.</p>
-        <p class="muted">💾 ${db.meta.lastBackup ? 'Último backup: ' + sinceText(db.meta.lastBackup) : 'Nenhum backup salvo ainda'}</p>
-        ${isIOS && !isStandalone() ? '<p class="muted">📱 Você está no Safari. Os dados daqui ficam separados do app instalado pela Tela de Início — se já começou por aqui, salve um backup e importe no app instalado.</p>' : ''}
-        <div class="stack"><button class="btn" id="exp">📤 Salvar backup (arquivo)</button><button class="btn" id="imp">📥 Importar backup</button></div>
+      <section class="cad">
+        <h2 class="cad-h">👶 Filhos</h2>
+        <div class="kids">${db.children.map(k => `
+          <button class="kid" data-id="${esc(k.id)}" style="--kc:${safeColor(k.color)}">
+            <span class="avatar">${esc(k.name[0] || '?')}</span>
+            <span class="k-body"><b>${esc(k.name)}</b><small>${esc(ageText(k))}</small>
+            <span class="k-al">${(k.allergies || []).length ? k.allergies.map(a => `<span class="tag tag-warn">⚠️ ${esc(a)}</span>`).join(' ') : '<small class="muted">Sem alergias cadastradas</small>'}</span>
+            <small class="muted">${db.dishes.filter(d => d.likedBy.includes(k.id)).length} pratos favoritos</small></span>
+          </button>`).join('') || '<p class="muted">Nenhuma criança cadastrada ainda.</p>'}</div>
+        <button class="btn btn-pink wide" id="addK">+ Cadastrar criança</button>
+      </section>
+
+      <section class="cad">
+        <h2 class="cad-h">📊 Pratos pela planilha Excel</h2>
+        <p class="muted">Para incluir vários pratos de uma vez: baixe o modelo, preencha (no computador ou no celular) e envie de volta. ${db.dishes.length ? `Hoje há <b>${db.dishes.length}</b> prato(s) cadastrado(s).` : ''}</p>
+        ${excelButtonsHTML()}
+        <button class="btn wide" id="addD1">➕ Cadastrar um prato</button>
+      </section>
+
+      <section class="cad">
+        <h2 class="cad-h">🏫 Cardápio da escola</h2>
+        <p class="muted">Importe o PDF que a escola envia todo mês. ${sd.length ? `Importado: <b>${sd.length}</b> dia(s) de aula, de ${fmtShort(sd[0])} a ${fmtShort(sd[sd.length - 1])}.` : 'Nenhum cardápio importado ainda.'}</p>
+        <label class="btn btn-pink wide file-btn">📄 Importar cardápio da escola (PDF)<input type="file" accept="application/pdf,.pdf" id="cadPdf"></label>
+        <div class="excel-btns">
+          <button class="btn" id="cadSchCfg">⚙️ Refeições na escola</button>
+          <button class="btn" id="cadSchView" ${schoolDays.length ? '' : 'disabled'}>📋 Ver dias importados</button>
+        </div>
+        ${schoolDays.length ? '<button class="btn wide" id="cadSchDishes">🍽️ Adicionar pratos da escola à base</button>' : ''}
+      </section>
+
+      <section class="cad">
+        <h2 class="cad-h">💾 Backup</h2>
+        <p class="muted">Os dados ficam guardados neste aparelho. Gere um backup de vez em quando e use-o para levar o cardápio a outro celular.</p>
+        <p class="muted">${db.meta.lastBackup ? 'Último backup: <b>' + sinceText(db.meta.lastBackup) + '</b>' : 'Nenhum backup gerado ainda.'}</p>
+        ${isIOS && !isStandalone() ? '<p class="muted">📱 Você está no Safari. Os dados daqui ficam separados do app instalado pela Tela de Início — se já começou por aqui, gere um backup e importe no app instalado.</p>' : ''}
+        <div class="excel-btns">
+          <button class="btn btn-pink" id="exp">📤 Gerar backup deste aparelho</button>
+          <button class="btn" id="imp">📥 Importar backup de outro aparelho</button>
+        </div>
       </section>`;
     $$('.kid', m).forEach(b => b.onclick = () => editKid(b.dataset.id));
     $('#addK').onclick = () => editKid(null);
+    $('#addD1').onclick = () => editDish(null);
+    bindExcelButtons(m);
+    $('#cadPdf').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) importSchoolPDF(f); };
+    $('#cadSchCfg').onclick = () => openSchoolConfig(null);
+    $('#cadSchView').onclick = () => openSchool();
+    const sdb = $('#cadSchDishes'); if (sdb) sdb.onclick = () => offerSchoolDishes(db.school);
     $('#exp').onclick = () => exportBackup();
     $('#imp').onclick = () => {
-      const sh = openSheet('Importar backup', `<p class="muted">Escolha o arquivo de backup (.json) salvo no outro aparelho. Isso substitui os dados deste aparelho (os atuais ficam guardados para desfazer).</p>
+      const sh = openSheet('Importar backup', `<p class="muted">Escolha o arquivo de backup (.json) gerado no outro aparelho. Isso substitui os dados deste aparelho (os atuais ficam guardados para desfazer).</p>
         <label class="btn btn-pink wide file-btn">📂 Escolher arquivo de backup<input type="file" accept=".json,application/json,text/plain" id="impF"></label>
         <details><summary class="muted">Ou cole o texto do backup</summary><textarea id="impT" rows="6"></textarea><div class="sheet-actions"><button class="btn" id="impOk">Importar texto</button></div></details>
         ${hasPrev() ? '<div class="sheet-actions"><button class="btn" id="impUndo">↩️ Desfazer a última importação</button></div>' : ''}`);
@@ -897,7 +945,7 @@
   }
   window.onAndroidBack = () => {
     if (current) { closeSheet(); return true; }
-    if (state.view !== 'dia') { go('dia'); return true; }
+    if (state.view !== 'agenda') { go('agenda'); return true; }
     return false;
   };
 
