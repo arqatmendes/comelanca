@@ -82,7 +82,7 @@
   const activeKids = () => state.kid === 'all' ? db.children : db.children.filter(c => c.id === state.kid);
 
   // ---------- Sugestão ----------
-  function schoolWords(date) { return norm(db.school[date] || '').split(/[^a-z]+/).filter(w => w.length > 3); }
+  function schoolWords(date) { const si = schoolInfo(date, 'almoco', activeKids()); return si ? norm(si.text).split(/[^a-z]+/).filter(w => w.length > 3 && !['assado', 'assada', 'grelhado', 'molho', 'refogado'].includes(w)) : []; }
 
   function candidates(slot, date, kids, usedWeek, usedDay) {
     const t = date;
@@ -131,7 +131,7 @@
       for (const s of SLOTS) {
         const c = cell(date, s.key);
         if (c && (c.locked || (onlyEmpty && c.items.length))) continue;
-        if (s.key === 'almoco' && db.school[date]) continue;
+        const si = schoolInfo(date, s.key, activeKids()); if (si && si.all) continue;
         if (c && !onlyEmpty) c.items.forEach(id => usedWeek[id] = Math.max(0, (usedWeek[id] || 1) - 1));
         const items = suggestCell(date, s.key, { usedWeek, usedDay });
         if (!items.length) continue;
@@ -197,16 +197,17 @@
         <button class="pill icon-btn" id="next" aria-label="Próximo dia">›</button>
         ${kidSelect()}
       </div>
+      ${schoolHoliday(date) ? '<div class="holiday">🏖️ Feriado — sem aula hoje</div>' : ''}
       ${db.children.length ? '' : `<button class="card-plain onboard" id="goKids"><b>👋 Bem-vindo(a) ao Comelança!</b><br><span class="muted">Comece cadastrando as crianças na aba <b>Filhos</b> — ou importe os dados de outro celular por lá.</span></button>`}
       <div class="cards">${SLOTS.map(s => {
         const c = cell(date, s.key); const items = c ? c.items : [];
-        const school = s.key === 'almoco' && db.school[date];
+        const school = schoolInfo(date, s.key, kids);
         return `<button class="meal meal-${s.key}" data-slot="${s.key}">
           <span class="meal-art">${ART[s.art]}</span>
           <span class="meal-body">
             <span class="meal-title title-outline">${s.label}${c && c.locked ? ' <span class="lock">🔒</span>' : ''}</span>
-            ${school ? `<span class="school">🏫 Escola: ${esc(db.school[date])}</span>` : ''}
-            ${items.length ? `<ul>${items.map(id => itemLine(id, kids)).join('')}</ul>` : (school ? '' : '<span class="empty">Toque para escolher</span>')}
+            ${schoolBadge(school)}
+            ${items.length ? `<ul>${items.map(id => itemLine(id, kids)).join('')}</ul>` : (school && school.all ? '' : '<span class="empty">Toque para escolher</span>')}
           </span></button>`;
       }).join('')}</div>
       <div class="actions"><button class="btn btn-pink" id="sugDay">✨ Sugerir o que falta hoje</button></div>`;
@@ -282,13 +283,13 @@
       </div>
       <div class="week">${days.map(date => `
         <section class="day ${date === t ? 'today' : ''}">
-          <button class="day-head" data-date="${date}"><b>${DOW[parseISO(date).getDay()]}</b><span>${fmtShort(date)}${date === t ? ' · hoje' : ''}</span></button>
+          <button class="day-head" data-date="${date}"><b>${DOW[parseISO(date).getDay()]}${schoolHoliday(date) ? ' <span class="tag">feriado</span>' : ''}</b><span>${fmtShort(date)}${date === t ? ' · hoje' : ''}</span></button>
           <div class="slots">${SLOTS.map(s => {
-            const c = cell(date, s.key); const school = s.key === 'almoco' && db.school[date];
+            const c = cell(date, s.key); const school = schoolInfo(date, s.key, kids);
             const names = c ? c.items.map(id => dish(id)).filter(Boolean).map(d => esc(d.name)) : [];
             return `<button class="slot meal-${s.key}" data-date="${date}" data-slot="${s.key}">
               <span class="slot-k">${s.short}${c && c.locked ? ' 🔒' : ''}</span>
-              <span class="slot-v">${school ? `🏫 ${esc(db.school[date])}${names.length ? ' + ' : ''}` : ''}${names.join(' + ') || (school ? '' : '<i>—</i>')}</span></button>`;
+              <span class="slot-v">${school ? `<span class="sch-mini">${schoolBadge(school, true)}</span>${names.length ? ' + ' : ''}` : ''}${names.join(' + ') || (school ? '' : '<i>—</i>')}</span></button>`;
           }).join('')}</div>
         </section>`).join('')}</div>`;
     bindKidSelect();
@@ -301,7 +302,7 @@
       if (!ds.length) return toast('Essa semana já passou');
       const n = planRange(ds); toast(n ? `${n} refeições sugeridas 🎉` : 'Semana já está completa'); render();
     };
-    $('#school').onclick = () => openSchool(ws);
+    $('#school').onclick = () => openSchool();
     $('#more').onclick = () => {
       const sh = openSheet('Opções da semana', `
         <div class="stack">
@@ -317,53 +318,128 @@
   function weekText(days) {
     return 'Cardápio Comelança\n' + days.map(date => `\n${DOW[parseISO(date).getDay()]} ${fmtShort(date)}\n` + SLOTS.map(s => {
       const c = cell(date, s.key); const names = c ? c.items.map(id => dish(id)).filter(Boolean).map(d => d.name) : [];
-      if (s.key === 'almoco' && db.school[date]) names.unshift('Escola: ' + db.school[date]);
+      const si = schoolInfo(date, s.key, activeKids()); if (si) names.unshift('Escola: ' + si.text);
       return `• ${s.label}: ${names.join(' + ') || '—'}`;
     }).join('\n')).join('\n');
   }
 
-  // Cardápio da escola
-  function parseSchool(text, refDate) {
-    const ref = parseISO(refDate); const out = {};
-    let curMonth = ref.getMonth(), curYear = ref.getFullYear();
-    for (const raw of text.split(/\n+/)) {
-      const line = raw.trim(); if (!line) continue;
-      const m = line.match(/^(?:dia\s*)?(\d{1,2})(?:\s*[\/.-]\s*(\d{1,2}))?(?:\s*[\/.-]\s*\d{2,4})?\s*(?:\([^)]*\)\s*)?(?:[-–—:)|.]|\s(?:seg|ter|qua|qui|sex|s[aá]b|dom)[a-zç-]*\s*[-–—:]?)?\s*(.+)$/i);
-      if (!m) continue;
-      const day = +m[1]; if (day < 1 || day > 31) continue;
-      if (m[2]) curMonth = +m[2] - 1;
-      const meal = m[3].replace(/^(seg|ter|qua|qui|sex|s[aá]b|dom)[a-zçá-]*\s*[-–—:]?\s*/i, '').trim();
-      if (!meal) continue;
-      out[iso(new Date(curYear, curMonth, day))] = meal;
-    }
-    return out;
+  // ---------- Cardápio da escola ----------
+  const SCHOOL_SLOTS = ['lanche_manha', 'almoco', 'lanche_tarde', 'janta'];
+  const VARIANTS = { regular: 'Cardápio regular', bercario: 'Berçário / Infantil I' };
+  function schoolCfg() {
+    const c = db.schoolCfg = db.schoolCfg || {};
+    c.slots = c.slots || { lanche_manha: true, almoco: true, lanche_tarde: true, janta: false };
+    c.days = c.days || [1, 2, 3, 4, 5];
+    c.kids = c.kids || {};
+    return c;
   }
-  function openSchool(ws) {
-    const ms = ws.slice(0, 8) + '01';
+  const kidSchool = k => schoolCfg().kids[k.id] || { attends: true, variant: 'regular' };
+  function schoolEntry(date) { const e = db.school[date]; if (!e) return null; return typeof e === 'string' ? { almoco: { principal: e } } : e; }
+  function schoolHoliday(date) { const e = schoolEntry(date); return !!(e && e.holiday && schoolCfg().days.includes(parseISO(date).getDay())); }
+  // O que a escola serve nesta refeição para as crianças selecionadas (ou null)
+  function schoolInfo(date, slot, kids) {
+    const e = schoolEntry(date); const c = schoolCfg();
+    if (!e || e.holiday || !c.slots[slot] || !c.days.includes(parseISO(date).getDay())) return null;
+    const base = kids.length ? kids : db.children;
+    const att = base.filter(k => kidSchool(k).attends);
+    if (db.children.length && !att.length) return null;
+    let text = '', detail = '';
+    if (slot === 'almoco') {
+      const a = e.almoco || {};
+      text = [a.principal, a.guarnicao].filter(Boolean).join(' + ') || a.base || '';
+      detail = [a.base, a.salada && 'Salada: ' + a.salada, a.sobremesa && 'Sobremesa: ' + a.sobremesa].filter(Boolean).join(' · ');
+    } else if (slot === 'janta') {
+      text = (e.janta || []).join(', ');
+    } else {
+      const v = e[slot] || {};
+      const per = (att.length ? att : [null]).map(k => ({ k, t: (v[k ? kidSchool(k).variant : 'regular'] || v.regular || []).join(' + ') }));
+      text = new Set(per.map(x => x.t)).size <= 1 ? per[0].t : per.map(x => `${x.k.name}: ${x.t}`).join(' · ');
+    }
+    if (!text) return null;
+    const all = att.length === base.length;
+    return { text, detail, all, who: base.length > 1 && !all ? att.map(k => k.name).join(', ') : '' };
+  }
+  function schoolBadge(si, compact) {
+    if (!si) return '';
+    const who = si.who ? ` (${esc(si.who)})` : '';
+    return compact ? `🏫${who} ${esc(si.text)}` : `<span class="school">🏫 Escola${who}: ${esc(si.text)}${si.detail ? `<small>${esc(si.detail)}</small>` : ''}</span>`;
+  }
+
+  let pdfReady = null;
+  function loadPdfLib() {
+    if (window.pdfjsLib) return Promise.resolve();
+    return pdfReady = pdfReady || new Promise((res, rej) => {
+      const sc = document.createElement('script'); sc.src = 'vendor/pdf.min.js';
+      sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js'; res(); };
+      sc.onerror = () => { pdfReady = null; rej(new Error('Não foi possível carregar o leitor de PDF')); };
+      document.head.appendChild(sc);
+    });
+  }
+
+  function openSchool() {
     const sh = openSheet('🏫 Cardápio da escola', `
-      <p class="muted">Cole o cardápio mensal que a escola publica (um dia por linha, ex.: <code>05/11 - Arroz, feijão e frango</code>). Os almoços dos dias com escola não entram na sugestão automática e a janta evita repetir os mesmos ingredientes.</p>
-      <label class="field"><span>Mês de referência</span><input type="month" id="schM" value="${ms.slice(0, 7)}"></label>
-      <textarea id="schT" rows="7" placeholder="03/11 - Macarrão à bolonhesa&#10;04/11 - Arroz, feijão e frango&#10;..."></textarea>
-      <div class="sheet-actions"><button class="btn btn-pink" id="schP">Ler cardápio</button></div>
+      <p class="muted">Importe o PDF do cardápio que a escola envia todo mês. O app lê o lanche da manhã, o almoço, o lanche da tarde e o jantar de cada dia, e reconhece os feriados.</p>
+      <label class="btn btn-pink wide file-btn">📄 Importar cardápio (PDF)<input type="file" accept="application/pdf,.pdf" id="schF"></label>
+      <button class="btn wide" id="schCfg">⚙️ Quais refeições são na escola</button>
       <div id="schList"></div>`);
     const list = () => {
-      const month = $('#schM', sh.body).value;
-      const entries = Object.keys(db.school).filter(d => d.startsWith(month)).sort();
-      $('#schList', sh.body).innerHTML = entries.length ? `<h3>Dias cadastrados</h3>` + entries.map(d => `
-        <div class="sch-row"><b>${DOW3[parseISO(d).getDay()]} ${fmtShort(d)}</b><input value="${esc(db.school[d])}" data-d="${d}"><button class="x" data-del="${d}">✕</button></div>`).join('') +
-        `<div class="sheet-actions"><button class="btn" id="schClr">Apagar mês</button></div>` : '<p class="muted">Nenhum dia cadastrado neste mês.</p>';
-      $$('.sch-row input', sh.body).forEach(i => i.onchange = () => { if (i.value.trim()) db.school[i.dataset.d] = i.value.trim(); else delete db.school[i.dataset.d]; save(); });
+      const days = Object.keys(db.school).sort();
+      const t = today();
+      const upcoming = days.filter(d => d >= weekStart(t));
+      $('#schList', sh.body).innerHTML = days.length ? `
+        <h3>Dias importados <small class="muted">(${days.length})</small></h3>
+        ${(upcoming.length ? upcoming : days).map(d => { const e = schoolEntry(d); const a = (e && e.almoco) || {};
+          return `<div class="sch-row"><b>${DOW3[parseISO(d).getDay()]} ${fmtShort(d)}</b><span>${e.holiday ? '🏖️ Feriado' : esc([a.principal, a.guarnicao].filter(Boolean).join(' + ') || '—')}</span><button class="x" data-del="${d}" aria-label="Remover dia">✕</button></div>`; }).join('')}
+        ${upcoming.length && upcoming.length < days.length ? `<p class="muted">Dias anteriores a esta semana ficam guardados no histórico.</p>` : ''}
+        <div class="sheet-actions"><button class="btn btn-danger" id="schClr">Apagar cardápio escolar</button></div>` : '<p class="muted">Nenhum cardápio importado ainda.</p>';
       $$('[data-del]', sh.body).forEach(b => b.onclick = () => { delete db.school[b.dataset.del]; save(); list(); });
-      const clr = $('#schClr', sh.body); if (clr) clr.onclick = () => { entries.forEach(d => delete db.school[d]); save(); list(); };
+      const clr = $('#schClr', sh.body); if (clr) clr.onclick = () => { if (confirm('Apagar todos os dias do cardápio escolar?')) { db.school = {}; save(); list(); } };
     };
-    $('#schM', sh.body).onchange = list;
-    $('#schP', sh.body).onclick = () => {
-      const got = parseSchool($('#schT', sh.body).value, $('#schM', sh.body).value + '-01');
-      const n = Object.keys(got).length; Object.assign(db.school, got); save();
-      toast(n ? `${n} dia(s) lidos` : 'Não reconheci nenhum dia. Use o formato 05/11 - prato'); $('#schT', sh.body).value = ''; list();
+    $('#schCfg', sh.body).onclick = () => openSchoolConfig(null);
+    $('#schF', sh.body).onchange = async e => {
+      const f = e.target.files && e.target.files[0]; e.target.value = '';
+      if (!f) return;
+      toast('Lendo o cardápio…');
+      try {
+        await loadPdfLib();
+        const parsed = await window.SchoolPDF.parsePDF(await f.arrayBuffer(), new Date());
+        if (!Object.keys(parsed).length) return toast('Não encontrei dias neste PDF. Confira se é o cardápio da escola.');
+        openSchoolConfig(parsed);
+      } catch (err) { toast('Não consegui ler este PDF: ' + (err.message || err)); }
     };
     list();
     sh.onClose = () => render();
+  }
+
+  // Caixa de diálogo: quais refeições são feitas na escola (e por qual criança)
+  function openSchoolConfig(parsed) {
+    const c = schoolCfg();
+    let summary = '';
+    if (parsed) {
+      const ds = Object.keys(parsed).sort(); const hol = ds.filter(d => parsed[d].holiday);
+      summary = `<div class="card-plain found"><b>✅ Cardápio lido!</b><br>${ds.length - hol.length} dias de aula de ${fmtShort(ds[0])} a ${fmtShort(ds[ds.length - 1])}${hol.length ? ` · ${hol.length} feriado${hol.length > 1 ? 's' : ''} (${hol.map(fmtShort).join(', ')})` : ''}</div>`;
+    }
+    const sh = openSheet(parsed ? 'Importar cardápio' : 'Refeições na escola', `
+      ${summary}
+      <h3>Quais refeições as crianças fazem na escola?</h3>
+      <div class="stack">${SCHOOL_SLOTS.map(k => `<label class="opt meal-${k}"><input type="checkbox" name="ss" value="${k}" ${c.slots[k] ? 'checked' : ''}><span>${SLOT[k].label}</span></label>`).join('')}</div>
+      <h3>Dias de aula</h3>
+      <div class="chips">${[1, 2, 3, 4, 5, 6].map(d => `<label class="chip"><input type="checkbox" name="sd" value="${d}" ${c.days.includes(d) ? 'checked' : ''}>${DOW3[d]}</label>`).join('')}</div>
+      ${db.children.length ? `<h3>Crianças</h3>${db.children.map(k => { const ks = kidSchool(k); return `
+        <div class="kid-school"><label class="check"><input type="checkbox" data-att="${k.id}" ${ks.attends ? 'checked' : ''}><i class="dot" style="background:${k.color}"></i><b>${esc(k.name)}</b> vai à escola</label>
+        <select data-var="${k.id}">${Object.entries(VARIANTS).map(([v, l]) => `<option value="${v}" ${ks.variant === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`; }).join('')}` : ''}
+      <p class="muted">As refeições marcadas aparecem no calendário como “🏫 Escola” e não entram na sugestão automática. A janta em casa evita repetir o que foi servido no almoço da escola.</p>
+      <div class="sheet-actions"><button class="btn" id="cfgCancel">Cancelar</button><button class="btn btn-pink" id="cfgOk">${parsed ? 'Importar' : 'Salvar'}</button></div>`);
+    $('#cfgCancel', sh.body).onclick = () => { closeSheet(); if (!parsed) openSchool(); };
+    $('#cfgOk', sh.body).onclick = () => {
+      const slots = {}; SCHOOL_SLOTS.forEach(k => slots[k] = false); $$('input[name=ss]:checked', sh.body).forEach(i => slots[i.value] = true);
+      c.slots = slots;
+      c.days = $$('input[name=sd]:checked', sh.body).map(i => +i.value);
+      db.children.forEach(k => { const a = $(`[data-att="${k.id}"]`, sh.body), v = $(`[data-var="${k.id}"]`, sh.body); c.kids[k.id] = { attends: a ? a.checked : true, variant: v ? v.value : 'regular' }; });
+      if (parsed) Object.assign(db.school, parsed);
+      save(); closeSheet(); render();
+      toast(parsed ? 'Cardápio da escola importado 🏫' : 'Configuração salva');
+    };
   }
 
   // ---------- Aba Pratos ----------
@@ -432,13 +508,31 @@
   }
 
   // ---------- Aba Filhos ----------
+  // Idade calculada a partir da data de nascimento
+  function ageText(k) {
+    if (k.birth) {
+      const b = parseISO(k.birth), t = new Date();
+      let y = t.getFullYear() - b.getFullYear(), m = t.getMonth() - b.getMonth();
+      if (t.getDate() < b.getDate()) m--;
+      if (m < 0) { y--; m += 12; }
+      if (y < 0) return '';
+      const parts = [];
+      if (y > 0) parts.push(`${y} ano${y === 1 ? '' : 's'}`);
+      if (y < 3 && m > 0) parts.push(`${m} ${m === 1 ? 'mês' : 'meses'}`);
+      if (!parts.length) parts.push('recém-nascido(a)');
+      const bday = b.getDate() === t.getDate() && b.getMonth() === t.getMonth() ? ' 🎂 Feliz aniversário!' : '';
+      return `${parts.join(' e ')} · nasceu em ${pad(b.getDate())}/${pad(b.getMonth() + 1)}/${b.getFullYear()}${bday}`;
+    }
+    if (k.age !== '' && k.age != null) return `${k.age} anos — cadastre a data de nascimento`;
+    return 'Data de nascimento não informada';
+  }
   function renderKids() {
     const m = $('#main');
     m.innerHTML = `
       <div class="kids">${db.children.map(k => `
         <button class="kid" data-id="${k.id}" style="--kc:${k.color}">
           <span class="avatar">${esc(k.name[0] || '?')}</span>
-          <span class="k-body"><b>${esc(k.name)}</b><small>${k.age != null && k.age !== '' ? `${esc(k.age)} ano${+k.age === 1 ? '' : 's'}` : ''}</small>
+          <span class="k-body"><b>${esc(k.name)}</b><small>${esc(ageText(k))}</small>
           <span class="k-al">${(k.allergies || []).length ? k.allergies.map(a => `<span class="tag tag-warn">⚠️ ${esc(a)}</span>`).join(' ') : '<small class="muted">Sem alergias cadastradas</small>'}</span>
           <small class="muted">${db.dishes.filter(d => d.likedBy.includes(k.id)).length} pratos favoritos</small></span>
         </button>`).join('') || '<p class="muted center">Nenhuma criança cadastrada.</p>'}</div>
@@ -461,17 +555,20 @@
   }
   function editKid(id) {
     const isNew = !id;
-    const k = id ? Object.assign({}, kid(id)) : { id: uid('c'), name: '', age: '', allergies: [], color: KID_COLORS[db.children.length % KID_COLORS.length] };
+    const k = id ? Object.assign({}, kid(id)) : { id: uid('c'), name: '', birth: null, allergies: [], color: KID_COLORS[db.children.length % KID_COLORS.length] };
     const sh = openSheet(isNew ? 'Nova criança' : 'Editar ' + k.name, `
       <label class="field"><span>Nome</span><input id="kN" value="${esc(k.name)}"></label>
-      <label class="field"><span>Idade (anos)</span><input id="kA" type="number" min="0" max="18" inputmode="numeric" value="${esc(k.age)}"></label>
+      <label class="field"><span>Data de nascimento</span><input id="kB" type="date" max="${today()}" value="${esc(k.birth || '')}"></label>
+      <p class="muted" id="kAge">${esc(ageText(k))}</p>
       <label class="field"><span>Alergias / restrições (separe por vírgula)</span><input id="kL" value="${esc((k.allergies || []).join(', '))}" placeholder="ex.: amendoim, leite"></label>
       <div class="field"><span>Cor</span><div class="colors">${KID_COLORS.map(c => `<label class="color"><input type="radio" name="kc" value="${c}" ${k.color === c ? 'checked' : ''}><i style="background:${c}"></i></label>`).join('')}</div></div>
       ${isNew ? `<label class="check"><input type="checkbox" id="kAll" checked> Marcar como “gosta” em todos os pratos atuais</label>` : ''}
       <div class="sheet-actions">${isNew ? '' : '<button class="btn btn-danger" id="kDel">Remover</button>'}<button class="btn btn-pink" id="kSave">Salvar</button></div>`);
+    $('#kB', sh.body).onchange = e => { $('#kAge', sh.body).textContent = ageText({ birth: e.target.value || null, age: k.age }); };
     $('#kSave', sh.body).onclick = () => {
       k.name = $('#kN', sh.body).value.trim(); if (!k.name) return toast('Informe o nome');
-      k.age = $('#kA', sh.body).value === '' ? '' : +$('#kA', sh.body).value;
+      k.birth = $('#kB', sh.body).value || null;
+      if (k.birth) delete k.age;
       k.allergies = splitList($('#kL', sh.body).value);
       const c = $('input[name=kc]:checked', sh.body); if (c) k.color = c.value;
       if (isNew) { db.children.push(k); const all = $('#kAll', sh.body); if (all && all.checked) db.dishes.forEach(d => d.likedBy.push(k.id)); }

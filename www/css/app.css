@@ -221,3 +221,16 @@ textarea { resize: vertical; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 .onboard { display:block; width:100%; text-align:left; margin:0 0 12px; background:#fff8dc; }
+.school small { display: block; font-weight: 600; font-size: .75rem; color: var(--ink-soft); margin-top: 2px; }
+.sch-mini { font-weight: 700; }
+.holiday { background: #fde3c8; border: 2px dashed var(--line); border-radius: 14px; padding: 8px 12px; font-weight: 800; text-align: center; margin-bottom: 12px; }
+.file-btn { position: relative; overflow: hidden; margin: 8px 0; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.sheet-body h3 { font-family: Fredoka, sans-serif; font-weight: 600; margin: 16px 0 8px; }
+.opt { display: flex; align-items: center; gap: 10px; border: 2px solid var(--line); border-radius: 14px; padding: 10px 12px; font-weight: 800; }
+.opt input { width: 20px; height: 20px; accent-color: var(--sage-d); }
+.kid-school { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; background: var(--paper); border: 2px solid var(--line); border-radius: 14px; padding: 6px 12px; margin: 6px 0; }
+.kid-school .check { margin: 0; }
+.kid-school select { border: 2px solid var(--line); border-radius: 10px; padding: 5px 8px; background: #fff; font-weight: 700; font-size: .85rem; }
+.found { background: #e6f0e3; }
+.sch-row span { font-size: .85rem; }

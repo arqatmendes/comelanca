@@ -16,6 +16,20 @@ import java.net.URL;
 
 public class MainActivity extends Activity {
     private WebView web;
+    private android.webkit.ValueCallback<Uri[]> fileCallback;
+    private static final int FILE_REQ = 41;
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        if (req == FILE_REQ && fileCallback != null) {
+            Uri[] r = null;
+            if (res == RESULT_OK && data != null && data.getData() != null) r = new Uri[]{ data.getData() };
+            fileCallback.onReceiveValue(r);
+            fileCallback = null;
+            return;
+        }
+        super.onActivityResult(req, res, data);
+    }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -27,7 +41,24 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setAllowFileAccess(true);
-        web.setWebChromeClient(new android.webkit.WebChromeClient());
+        s.setAllowFileAccessFromFileURLs(true); // leitor de PDF usa um worker local
+        web.setWebChromeClient(new android.webkit.WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView v, android.webkit.ValueCallback<Uri[]> cb, FileChooserParams params) {
+                if (fileCallback != null) fileCallback.onReceiveValue(null);
+                fileCallback = cb;
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("application/pdf");
+                try {
+                    startActivityForResult(Intent.createChooser(i, "Escolha o cardápio (PDF)"), FILE_REQ);
+                } catch (Exception e) {
+                    fileCallback = null;
+                    return false;
+                }
+                return true;
+            }
+        });
         web.addJavascriptInterface(new Bridge(), "NativeHttp");
         web.setWebViewClient(new WebViewClient() {
             @Override
